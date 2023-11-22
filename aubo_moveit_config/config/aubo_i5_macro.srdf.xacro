@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://wiki.ros.org/xacro">
+
+  <xacro:macro name="aubo_i5">
+  
+    <group name="manipulator_i5">
+        <chain base_link="base_link" tip_link="wrist3_Link" />
+    </group>
+    <group_state name="all_zero" group="manipulator_i5">
+        <joint name="shoulder_joint" value="0" />
+        <joint name="foreArm_joint" value="0" />
+        <joint name="upperArm_joint" value="0" />
+        <joint name="wrist1_joint" value="0" />
+        <joint name="wrist2_joint" value="0" />
+        <joint name="wrist3_joint" value="0" />
+    </group_state>
+    <!--VIRTUAL JOINT: Purpose: this element defines a virtual joint between a robot link and an external frame of reference (considered fixed with respect to the robot)-->
+    <virtual_joint name="FixedBase" type="fixed" parent_frame="world" child_link="base_link" />
+    <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
+    <disable_collisions link1="base_link" link2="shoulder_Link" reason="Adjacent" />
+    <disable_collisions link1="base_link" link2="upperArm_Link" reason="Never" />
+    <disable_collisions link1="foreArm_Link" link2="upperArm_Link" reason="Adjacent" />
+    <disable_collisions link1="foreArm_Link" link2="wrist1_Link" reason="Adjacent" />
+    <disable_collisions link1="shoulder_Link" link2="upperArm_Link" reason="Adjacent" />
+    <disable_collisions link1="shoulder_Link" link2="wrist1_Link" reason="Never" />
+    <disable_collisions link1="wrist1_Link" link2="wrist2_Link" reason="Adjacent" />
+    <disable_collisions link1="wrist1_Link" link2="wrist3_Link" reason="Never" />
+    <disable_collisions link1="wrist2_Link" link2="wrist3_Link" reason="Adjacent" />
+  </xacro:macro>
+</robot>

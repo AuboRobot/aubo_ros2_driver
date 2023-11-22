@@ -1,0 +1,10 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: aubo_description
+    relative_path: urdf/aubo_i5.urdf
+  srdf:
+    relative_path: config/aubo_i5.srdf
+  package_settings:
+    author_name: ji peng
+    author_email: jipeng@aubo-robotics.cn
+    generated_timestamp: 1689594747
