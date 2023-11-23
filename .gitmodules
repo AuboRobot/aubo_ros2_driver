@@ -1,0 +1,3 @@
+[submodule "aubo_description"]
+	path = aubo_description
+	url = https://github.com/AuboRobot/aubo_description.git
