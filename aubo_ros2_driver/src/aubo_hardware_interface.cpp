@@ -285,9 +285,14 @@ int AuboHardwareInterface::Servoj(
     int servoJoint_num = rpc_client_->getRobotInterface(robot_name)
                              ->getMotionControl()
                              ->servoJoint(traj, 0.2, 0.2, 0.005, 0.1, 200);
-    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    if(servoJoint_num != 0){
+    
+    	RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+                "servoj not succeed!");
+        return -1;
+        
+    }
 
-    //    std::cout << "servoJoint finish!" << std::endl;
 
     return 0;
 }
