@@ -134,7 +134,6 @@ def generate_launch_description():
             ),
             " ",
             "prefix:=",
-            prefix,
             " ",
             "use_fake_hardware:=",
             use_fake_hardware,
@@ -158,16 +157,16 @@ def generate_launch_description():
     )
 
     rviz_config_file = PathJoinSubstitution(
-        [FindPackageShare(moveit_config_package), "rviz", "moveit.rviz"]
+        [FindPackageShare(moveit_config_package), "config", "moveit.rviz"]
     )
 
-    
-    aubo_control_node = Node(
-        package="aubo_ros2_driver",
-        executable="aubo_ros2_control_node",
+    control_node = Node(
+        package="controller_manager",
+        executable="ros2_control_node",
         parameters=[robot_description, robot_controllers],
         output="both",
     )
+
     robot_state_publisher_node = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -186,7 +185,7 @@ def generate_launch_description():
 
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
-        executable="spawner",
+        executable="spawner.py",
         arguments=[
             "joint_state_broadcaster",
             "--controller-manager",
@@ -196,12 +195,12 @@ def generate_launch_description():
 
     initial_joint_controller_spawner = Node(
         package="controller_manager",
-        executable="spawner",
+        executable="spawner.py",
         arguments=[initial_joint_controller, "-c", "/controller_manager"],
     )
 
     nodes_to_start = [
-        aubo_control_node,
+        control_node,
         robot_state_publisher_node,
         rviz_node,
         joint_state_broadcaster_spawner,

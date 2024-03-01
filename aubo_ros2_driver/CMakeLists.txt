@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22.1)
+cmake_minimum_required(VERSION 3.16.1)
 set(CMAKE_CXX_STANDARD 17)
 cmake_policy(SET CMP0097 NEW)
 project(aubo_ros2_driver)
@@ -11,16 +11,14 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(ENV{CPM_SOURCE_CACHE} $ENV{HOME}/.cache/CPM)
-
 # 下载 aubo_sdk 发布包(二进制方式引入)
     if(NOT aubo_sdk_POPULATED)
         include(FetchContent)
         FetchContent_Declare(
             aubo_sdk
             #URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.19.2-Linux_x86_64+a90aefb.zip"
-            #URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.20.0-Linux_x86_64+fc5de97.zip"
+            URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.20.0-Linux_x86_64+fc5de97.zip"
             #URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.21.0-Linux_x86_64+6e3177c.zip"
-            URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.22.1-Linux_x86_64+2ed0c14.zip"
         )
         FetchContent_Populate(aubo_sdk)
     endif()
@@ -34,7 +32,7 @@ message("aubo_sdk_DIR" ${aubo_sdk_SOURCE_DIR}/lib/cmake/aubo_sdk)
 #        )
 
 
-message("aubo_sdk_SOURCE_DIR ${aubo_sdk_SOURCE_DIR}")
+message("aubo_msgs_SOURCE_DIR ${aubo_msgs_INCLUDE_DIR}")
 
 find_package(aubo_sdk REQUIRED)
 find_package(ament_cmake REQUIRED)
@@ -94,19 +92,9 @@ target_include_directories(
   PRIVATE
   include
 )
-add_executable(aubo_ros2_control_node
-  src/aubo_ros2_control_node.cpp
-)
-
-ament_target_dependencies(aubo_ros2_control_node 
-    controller_manager 
-    rclcpp)
 
 pluginlib_export_plugin_description_file(hardware_interface hardware_interface_plugin.xml)
-install(
-  TARGETS aubo_ros2_control_node 
-  DESTINATION lib/${PROJECT_NAME}
-)
+
 install(
   TARGETS aubo_robot_driver_plugin
   DESTINATION lib
@@ -120,9 +108,7 @@ ament_export_libraries(
 install(DIRECTORY include/
   DESTINATION include
 )
-install(PROGRAMS ${aubo_sdk_SOURCE_DIR}/lib/libaubo_sdkd.so
-  DESTINATION lib
-)
+
 ament_export_dependencies(
   hardware_interface
   pluginlib
@@ -135,9 +121,9 @@ install(DIRECTORY config launch
 )
 ament_python_install_package(${PROJECT_NAME})
 
-#install(DIRECTORY config launch
-#  DESTINATION share/${PROJECT_NAME}
-#)
+install(DIRECTORY config launch
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()
 

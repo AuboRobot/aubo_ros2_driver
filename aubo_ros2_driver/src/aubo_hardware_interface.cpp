@@ -1,16 +1,134 @@
-#include "aubo_hardware_interface.h"
-#include <pluginlib/class_list_macros.hpp>
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "rclcpp/rclcpp.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
-#include <ctime>
-namespace aubo_driver {
+#include "aubo_hardware_interface.hpp"
 
+namespace aubo_driver {
 AuboHardwareInterface::~AuboHardwareInterface()
 {
     stopServoMode();
 }
-bool AuboHardwareInterface::OnActive()
+hardware_interface::return_type AuboHardwareInterface::configure(
+    const HardwareInfo &system_info)
 {
+    info_ = system_info;
+    initialized_ = false;
+    for (const hardware_interface::ComponentInfo &joint : info_.joints) {
+        // RRBotSystemPositionOnly has exactly one state and command interface
+        // on each joint
+        if (joint.command_interfaces.size() != 2) {
+            RCLCPP_FATAL(
+                rclcpp::get_logger("auboRBotSystemPositionOnlyHardware"),
+                "Joint '%s' has %zu command interfaces found. 2 expected.",
+                joint.name.c_str(), joint.command_interfaces.size());
+            return return_type::ERROR;
+        }
+
+        if (joint.command_interfaces[0].name !=
+            hardware_interface::HW_IF_POSITION) {
+            RCLCPP_FATAL(
+                rclcpp::get_logger("auboRBotSystemPositionOnlyHardware"),
+                "Joint '%s' have %s command interfaces found. '%s' expected.",
+                joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
+                hardware_interface::HW_IF_POSITION);
+            return return_type::ERROR;
+        }
+        if (joint.command_interfaces[1].name !=
+            hardware_interface::HW_IF_VELOCITY) {
+            RCLCPP_FATAL(
+                rclcpp::get_logger("auboRBotSystemPositionOnlyHardware"),
+                "Joint '%s' have %s command interfaces found as "
+                "second command interface. '%s' expected.",
+                joint.name.c_str(), joint.command_interfaces[1].name.c_str(),
+                hardware_interface::HW_IF_VELOCITY);
+            return return_type::ERROR;
+        }
+
+        if (joint.state_interfaces.size() != 2) {
+            RCLCPP_FATAL(
+                rclcpp::get_logger("auboRBotSystemPositionOnlyHardware"),
+                "Joint '%s' has %zu state interface. 2 expected.",
+                joint.name.c_str(), joint.state_interfaces.size());
+            return return_type::ERROR;
+        }
+
+        if (joint.state_interfaces[0].name !=
+            hardware_interface::HW_IF_POSITION) {
+            RCLCPP_FATAL(
+                rclcpp::get_logger("auboRBotSystemPositionOnlyHardware"),
+                "Joint '%s' have %s state interface. '%s' expected.",
+                joint.name.c_str(), joint.state_interfaces[0].name.c_str(),
+                hardware_interface::HW_IF_POSITION);
+            return return_type::ERROR;
+        }
+        if (joint.state_interfaces[1].name !=
+            hardware_interface::HW_IF_VELOCITY) {
+            RCLCPP_FATAL(
+                rclcpp::get_logger("auboRBotSystemPositionOnlyHardware"),
+                "Joint '%s' have %s state interface as second state "
+                "interface. '%s' expected.",
+                joint.name.c_str(), joint.state_interfaces[1].name.c_str(),
+                hardware_interface::HW_IF_POSITION);
+            return return_type::ERROR;
+        }
+    }
+
+    status_ = status::CONFIGURED;
+
+    return return_type::OK;
+}
+
+std::vector<hardware_interface::StateInterface>
+AuboHardwareInterface::export_state_interfaces()
+{
+    std::vector<hardware_interface::StateInterface> state_interfaces;
+    for (std::size_t i = 0; i < info_.joints.size(); ++i) {
+        state_interfaces.emplace_back(hardware_interface::StateInterface(
+            info_.joints[i].name, hardware_interface::HW_IF_POSITION,
+            &actual_q_copy_[i]));
+        state_interfaces.emplace_back(hardware_interface::StateInterface(
+            info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
+            &joint_velocity_copy_[i]));
+    }
+
+    return state_interfaces;
+}
+
+std::vector<hardware_interface::CommandInterface>
+AuboHardwareInterface::export_command_interfaces()
+{
+    std::vector<hardware_interface::CommandInterface> command_interfaces;
+    for (std::size_t i = 0; i < info_.joints.size(); ++i) {
+        command_interfaces.emplace_back(hardware_interface::CommandInterface(
+            info_.joints[i].name, hardware_interface::HW_IF_POSITION,
+            &aubo_position_commands_[i]));
+        command_interfaces.emplace_back(hardware_interface::CommandInterface(
+            info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
+            &aubo_velocity_commands_[i]));
+    }
+
+    return command_interfaces;
+}
+return_type AuboHardwareInterface::start()
+{
+    on_Active();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    readActualQ();
+    aubo_position_commands_ = actual_q_copy_;
+    initialized_ = true;
+    status_ = hardware_interface::status::STARTED;
+    return return_type::OK;
+}
+
+void AuboHardwareInterface::on_Active()
+{
+    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+                "Starting ...please wait...");
     const std::string robot_ip_ = info_.hardware_parameters["robot_ip"];
     rpc_client_ = std::make_shared<RpcClient>();
 
@@ -45,133 +163,35 @@ bool AuboHardwareInterface::OnActive()
 
     startServoMode();
 
-    return true;
+    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+                "System successfully started!");
 }
-
-hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
-    const hardware_interface::HardwareInfo &system_info)
-{
-    if (hardware_interface::SystemInterface::on_init(system_info) !=
-        hardware_interface::CallbackReturn::SUCCESS) {
-        return hardware_interface::CallbackReturn::ERROR;
-    }
-
-    info_ = system_info;
-    initialized_ = false;
-
-    for (const hardware_interface::ComponentInfo &joint : info_.joints) {
-        // RRBotSystemPositionOnly has exactly one state and command interface
-        // on each joint
-        if (joint.command_interfaces.size() != 2) {
-            RCLCPP_FATAL(
-                rclcpp::get_logger("RRBotSystemPositionOnlyHardware"),
-                "Joint '%s' has %zu command interfaces found. 1 expected.",
-                joint.name.c_str(), joint.command_interfaces.size());
-            return hardware_interface::CallbackReturn::ERROR;
-        }
-
-        if (joint.command_interfaces[0].name !=
-            hardware_interface::HW_IF_POSITION) {
-            RCLCPP_FATAL(
-                rclcpp::get_logger("RRBotSystemPositionOnlyHardware"),
-                "Joint '%s' have %s command interfaces found. '%s' expected.",
-                joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
-                hardware_interface::HW_IF_POSITION);
-            return hardware_interface::CallbackReturn::ERROR;
-        }
-
-        if (joint.state_interfaces.size() != 2) {
-            RCLCPP_FATAL(rclcpp::get_logger("RRBotSystemPositionOnlyHardware"),
-                         "Joint '%s' has %zu state interface. 1 expected.",
-                         joint.name.c_str(), joint.state_interfaces.size());
-            return hardware_interface::CallbackReturn::ERROR;
-        }
-
-        if (joint.state_interfaces[0].name !=
-            hardware_interface::HW_IF_POSITION) {
-            RCLCPP_FATAL(rclcpp::get_logger("RRBotSystemPositionOnlyHardware"),
-                         "Joint '%s' have %s state interface. '%s' expected.",
-                         joint.name.c_str(),
-                         joint.state_interfaces[0].name.c_str(),
-                         hardware_interface::HW_IF_POSITION);
-            return hardware_interface::CallbackReturn::ERROR;
-        }
-    }
-
-    return hardware_interface::CallbackReturn::SUCCESS;
-}
-hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
-    const rclcpp_lifecycle::State &previous_state)
+return_type AuboHardwareInterface::stop()
 {
     RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
-                "Starting ...please wait...");
-    OnActive();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                "Stopping ...please wait...");
+    stopServoMode();
+    status_ = hardware_interface::status::STOPPED;
+    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+                "System successfully stopped!");
+    return return_type::OK;
+}
+return_type AuboHardwareInterface::read()
+{
     readActualQ();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
+    std::cout << "read--------------------" << std::endl;
     if (!initialized_) {
         //获取初始状态
         aubo_position_commands_ = actual_q_copy_;
         initialized_ = true;
     }
-    return hardware_interface::CallbackReturn::SUCCESS;
+    return return_type::OK;
 }
-
-std::vector<hardware_interface::StateInterface>
-AuboHardwareInterface::export_state_interfaces()
+return_type AuboHardwareInterface::write()
 {
-    std::vector<hardware_interface::StateInterface> state_interfaces;
-    for (std::size_t i = 0; i < info_.joints.size(); ++i) {
-        state_interfaces.emplace_back(hardware_interface::StateInterface(
-            info_.joints[i].name, hardware_interface::HW_IF_POSITION,
-            &actual_q_copy_[i]));
-        state_interfaces.emplace_back(hardware_interface::StateInterface(
-            info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
-            &joint_velocity_copy_[i]));
-    }
-
-    return state_interfaces;
-}
-std::vector<hardware_interface::CommandInterface>
-AuboHardwareInterface::export_command_interfaces()
-{
-    std::vector<hardware_interface::CommandInterface> command_interfaces;
-    for (std::size_t i = 0; i < info_.joints.size(); ++i) {
-        command_interfaces.emplace_back(hardware_interface::CommandInterface(
-            info_.joints[i].name, hardware_interface::HW_IF_POSITION,
-            &aubo_position_commands_[i]));
-        command_interfaces.emplace_back(hardware_interface::CommandInterface(
-            info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
-            &aubo_velocity_commands_[i]));
-    }
-
-    return command_interfaces;
-}
-
-hardware_interface::return_type AuboHardwareInterface::read(
-    const rclcpp::Time &time, const rclcpp::Duration &period)
-{
-    readActualQ();
-    if (!initialized_) {
-        //获取初始状态
-        aubo_position_commands_ = actual_q_copy_;
-        initialized_ = true;
-    }
-
-    return hardware_interface::return_type::OK;
-}
-hardware_interface::return_type AuboHardwareInterface::write(
-    const rclcpp::Time &time, const rclcpp::Duration &period)
-{
-    if (1) {
-        try {
-            Servoj(aubo_position_commands_);
-        } catch (const std::exception &e) {
-        }
-    }
-
-    return hardware_interface::return_type::OK;
+    Servoj(aubo_position_commands_);
+    std::cout << "write--------------------" << std::endl;
+    return return_type::OK;
 }
 
 void AuboHardwareInterface::readActualQ()
@@ -179,26 +199,25 @@ void AuboHardwareInterface::readActualQ()
     // 使用 actual_q_copy_
     // 固定该时间戳下read到的位姿，否则读取到的关节状态不稳定
     // actual_q_copy_必须用 array 否则会 bad_alloc
-    {
-        std::unique_lock<std::mutex> lck(rtde_mtx_);
-        actual_q_copy_[0] = actual_q_[0];
-        actual_q_copy_[1] = actual_q_[1];
-        actual_q_copy_[2] = actual_q_[2];
-        actual_q_copy_[3] = actual_q_[3];
-        actual_q_copy_[4] = actual_q_[4];
-        actual_q_copy_[5] = actual_q_[5];
+    actual_q_copy_[0] = actual_q_[0];
+    actual_q_copy_[1] = actual_q_[1];
+    actual_q_copy_[2] = actual_q_[2];
+    actual_q_copy_[3] = actual_q_[3];
+    actual_q_copy_[4] = actual_q_[4];
+    actual_q_copy_[5] = actual_q_[5];
 
     //获取机械臂关节速度
-
-        joint_velocity_copy_[0] = joint_velocity_[0];
-        joint_velocity_copy_[1] = joint_velocity_[1];
-        joint_velocity_copy_[2] = joint_velocity_[2];
-        joint_velocity_copy_[3] = joint_velocity_[3];
-        joint_velocity_copy_[4] = joint_velocity_[4];
-        joint_velocity_copy_[5] = joint_velocity_[5];
-    }
+    joint_velocity_ = rpc_client_->getRobotInterface(robot_name_)
+                          ->getRobotState()
+                          ->getJointSpeeds();
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    joint_velocity_copy_[0] = joint_velocity_[0];
+    joint_velocity_copy_[1] = joint_velocity_[1];
+    joint_velocity_copy_[2] = joint_velocity_[2];
+    joint_velocity_copy_[3] = joint_velocity_[3];
+    joint_velocity_copy_[4] = joint_velocity_[4];
+    joint_velocity_copy_[5] = joint_velocity_[5];
 }
-// 设置rtde输入
 
 bool AuboHardwareInterface::isServoModeStart()
 {
@@ -285,14 +304,9 @@ int AuboHardwareInterface::Servoj(
     int servoJoint_num = rpc_client_->getRobotInterface(robot_name)
                              ->getMotionControl()
                              ->servoJoint(traj, 0.2, 0.2, 0.005, 0.1, 200);
-    if(servoJoint_num != 0){
-    
-    	RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
-                "servoj not succeed!");
-        return -1;
-        
-    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
 
+    //    std::cout << "servoJoint finish!" << std::endl;
 
     return 0;
 }
@@ -323,14 +337,14 @@ void AuboHardwareInterface::configSubscribe(RtdeClientPtr cli)
     // 接口调用: 设置 topic1
     int topic1 = cli->setTopic(
         false,
-        { "R1_actual_q", "R1_actual_qd", "R1_robot_mode", "R1_safety_mode",
+        { "R1_actual_q", "R1_actual_current", "R1_robot_mode", "R1_safety_mode",
           "runtime_state", "line_number", "R1_actual_TCP_pose" },
         500, 0);
     // 接口调用: 订阅
     cli->subscribe(topic1, [this](InputParser &parser) {
         std::unique_lock<std::mutex> lck(rtde_mtx_);
         actual_q_ = parser.popVectorDouble();
-        joint_velocity_ = parser.popVectorDouble();
+        actual_current_ = parser.popVectorDouble();
         robot_mode_ = parser.popRobotModeType();
         safety_mode_ = parser.popSafetyModeType();
         runtime_state_ = parser.popRuntimeState();
@@ -338,7 +352,9 @@ void AuboHardwareInterface::configSubscribe(RtdeClientPtr cli)
         actual_TCP_pose_ = parser.popVectorDouble();
     });
 }
+
 } // namespace aubo_driver
 
+#include "pluginlib/class_list_macros.hpp"
 PLUGINLIB_EXPORT_CLASS(aubo_driver::AuboHardwareInterface,
                        hardware_interface::SystemInterface)

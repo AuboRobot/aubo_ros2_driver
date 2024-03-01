@@ -78,7 +78,7 @@ def launch_setup(context, *args, **kwargs):
     ompl_planning_pipeline_config = {
         "move_group": {
             "planning_plugin": "ompl_interface/OMPLPlanner",
-            "request_adapters": """default_planner_request_adapters/AddTimeOptimalParameterization default_planner_request_adapters/ResolveConstraintFrames default_planner_request_adapters/FixWorkspaceBounds default_planner_request_adapters/FixStartStateBounds default_planner_request_adapters/FixStartStateCollision default_planner_request_adapters/FixStartStatePathConstraints""",
+            "request_adapters": """industrial_trajectory_filters/UniformSampleFilter default_planner_request_adapters/AddTimeOptimalParameterization default_planner_request_adapters/ResolveConstraintFrames default_planner_request_adapters/FixWorkspaceBounds default_planner_request_adapters/FixStartStateBounds default_planner_request_adapters/FixStartStateCollision default_planner_request_adapters/FixStartStatePathConstraints""",
             "start_state_max_bounds_error": 0.1,
             "sample_duration": 0.005,
         }
@@ -194,9 +194,9 @@ def generate_launch_description():
     declared_arguments.append(
         DeclareLaunchArgument(
             "robot_xacro_file",
-            default_value="aubo_ros2.xacro",
+            default_value="aubo.xacro",
             description="Xacro describing the robot.",
-            choices=["aubo_ros2.xacro"],
+            choices=["aubo.xacro"],
         )
     )
     declared_arguments.append(
@@ -220,7 +220,7 @@ def generate_launch_description():
             "moveit_config_file",
             description="Name of the SRDF file",
             default_value="aubo_i5.srdf",
-            choices=["aubo_iS7_CM02.srdf","aubo_i5.srdf"],
+            choices=["aubo_i5.srdf"],
         )
     )
 

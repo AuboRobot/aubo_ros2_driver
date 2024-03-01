@@ -1,40 +1,32 @@
 #ifndef AUBO_HARDWARE_INTERFACE_H
 #define AUBO_HARDWARE_INTERFACE_H
 
-// System
 #include <memory>
 #include <string>
 #include <vector>
 #include <limits>
 
-#include <algorithm>
-#include <utility>
-
 // ros2_control hardware_interface
 #include "hardware_interface/hardware_info.hpp"
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_return_values.hpp"
+#include "hardware_interface/types/hardware_interface_status_values.hpp"
 #include "hardware_interface/visibility_control.h"
 
-// ROS
-#include "rclcpp/macros.hpp"
-#include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
-#include "rclcpp_lifecycle/state.hpp"
-#include "geometry_msgs/msg/transform_stamped.hpp"
-#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
-
+// aubo
 #include <aubo_dashboard_msgs/msg/robot_mode.h>
-
 #include <aubo/robot/robot_state.h>
 #include "aubo_sdk/rtde.h"
 #include "aubo_sdk/rpc.h"
 #include "serviceinterface.h"
-#include "thread"
 
-using namespace arcs::common_interface;
+//ros
+#include "rclcpp/macros.hpp"
+  
 using namespace arcs::aubo_sdk;
-using RtdeRecipeMap =
-    std::unordered_map<int, arcs::common_interface::RtdeRecipe>;
+using hardware_interface::HardwareInfo;
+using hardware_interface::return_type;
+using hardware_interface::status;
 
 namespace aubo_driver {
 class AuboHardwareInterface : public hardware_interface::SystemInterface
@@ -42,37 +34,36 @@ class AuboHardwareInterface : public hardware_interface::SystemInterface
 public:
     RCLCPP_SHARED_PTR_DEFINITIONS(AuboHardwareInterface);
     virtual ~AuboHardwareInterface();
-
-    bool OnActive();
-    hardware_interface::CallbackReturn on_activate(
-        const rclcpp_lifecycle::State &previous_state);
-    hardware_interface::CallbackReturn on_init(
-        const hardware_interface::HardwareInfo &system_info) final;
+    return_type configure(const HardwareInfo &system_info) final;
     std::vector<hardware_interface::StateInterface> export_state_interfaces()
         final;
-
     std::vector<hardware_interface::CommandInterface>
     export_command_interfaces() final;
+    
+    status get_status() const final
+    {
+        return status_;
+    }
 
-    hardware_interface::return_type read(const rclcpp::Time &time,
-                                         const rclcpp::Duration &period) final;
-    hardware_interface::return_type write(const rclcpp::Time &time,
-                                          const rclcpp::Duration &period) final;
+    std::string get_name() const final
+    {
+        return info_.name;
+    }
 
+    return_type start() final;
+    return_type stop() final;
+    return_type read() final;
+    return_type write() final;
+
+protected:
     void readActualQ();
-
+    void on_Active();
     void setInput(RtdeClientPtr cli);
-
     bool isServoModeStart();
-
     bool ServoModeStart();
-
     int startServoMode();
-
     int stopServoMode();
-
     int Servoj(const std::array<double, 6> joint_position_command);
-
     void configSubscribe(RtdeClientPtr cli);
 
 private:
@@ -80,9 +71,11 @@ private:
     std::shared_ptr<RtdeClient> rtde_client_{ nullptr };
     std::vector<std::string> joint_names_;
     std::mutex rtde_mtx_;
-    std::string robot_ip_;
     std::string robot_name_;
-
+    
+    HardwareInfo info_;
+    status status_;
+  
     std::array<double, 6> aubo_position_commands_;
     std::array<double, 6> aubo_velocity_commands_;
     double speed_scaling_combined_;
