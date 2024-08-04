@@ -280,19 +280,19 @@ int AuboHardwareInterface::Servoj(
     for (size_t i = 0; i < traj.size(); i++) {
         traj[i] = joint_position_command[i];
     }
-
+    
+    if(!rpc_client_->getRobotInterface(robot_name)
+                ->getMotionControl()
+                ->isServoModeEnabled()){
+                
+        rpc_client_->getRobotInterface(robot_name)
+        ->getMotionControl()
+        ->setServoMode(true);           
+    }
     // 接口调用: 关节运动
     int servoJoint_num = rpc_client_->getRobotInterface(robot_name)
                              ->getMotionControl()
-                             ->servoJoint(traj, 0.2, 0.2, 0.005, 0.1, 200);
-    if(servoJoint_num != 0){
-    
-    	RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
-                "servoj not succeed!");
-        return -1;
-        
-    }
-
+                             ->servoJoint(traj, 0.2, 0.2, 0.01, 0.1, 200);
 
     return 0;
 }
