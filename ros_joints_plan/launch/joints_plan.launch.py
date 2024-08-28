@@ -156,7 +156,7 @@ def launch_setup(context, *args, **kwargs):
         output="both",
         parameters=[robot_description],
     )
-    nodes_to_start = [move_group_demo, move_group_node,static_tf_node,robot_state_pub_node]
+    nodes_to_start = [move_group_demo, move_group_node,static_tf_node]
     return nodes_to_start
 def generate_launch_description():
     declared_arguments = []
