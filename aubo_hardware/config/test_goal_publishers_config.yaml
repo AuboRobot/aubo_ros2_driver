@@ -1,0 +1,32 @@
+publisher_joint_trajectory_controller:
+  ros__parameters:
+
+    controller_name: "joint_trajectory_controller"
+    wait_sec_between_publish: 6
+
+    goal_names: ["pos1", "pos2", "pos3", "pos4"]
+    pos1:
+      positions: [0.0, -0.26, 1.75, 0.436, 1.57, 1.31]
+    pos2:
+      positions: [0.627, -0.197, 1.046, -0.327, 1.57, 0.627]
+    pos3:
+      positions: [0.716, -0.133, 1.724, 0.287, 1.57, 0.203]
+    pos4:
+      positions: [-0.3, 0.267, 1.91, 0.075, 1.57, -0.3]
+
+    joints:
+      - shoulder_joint
+      - upperArm_joint
+      - foreArm_joint
+      - wrist1_joint
+      - wrist2_joint
+      - wrist3_joint
+
+    check_starting_point: true
+    starting_point_limits:
+      shoulder_joint: [-1.57,1.57]
+      upperArm_joint: [-0.52,0.52]
+      foreArm_joint: [-2.4,2.4]
+      wrist_1_joint: [-1.6,1.6]
+      wrist_2_joint: [0.0,2.0]
+      wrist_3_joint: [-2.0,2.0]

@@ -1,0 +1,9 @@
+<library path="aubo_hardware">
+  <class name="aubo_hardware/AuboHardwareInterface"
+         type="aubo_hardware::AuboHardwareInterface"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+		ROS2 Control System Driver for the aubo Robots series.
+    </description>
+  </class>
+</library>

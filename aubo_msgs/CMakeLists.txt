@@ -20,6 +20,11 @@ set(srv_files
   srv/SetPayload.srv
   srv/SetSpeedSliderFraction.srv
   srv/SetIO.srv
+  srv/modbus/AddSignal.srv
+  srv/modbus/DeleteSignal.srv
+  srv/modbus/GetSignalStatus.srv
+  srv/modbus/SetOutputSignal.srv
+  srv/modbus/SetSignalUpdateFrequency.srv
 )
 
 if(BUILD_TESTING)

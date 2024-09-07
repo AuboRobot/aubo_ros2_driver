@@ -31,19 +31,11 @@ int8 PIN_DOUT5 = 5
 int8 PIN_DOUT6 = 6
 int8 PIN_DOUT7 = 7
 
-# configurable out
-int8 PIN_CONF_OUT0 = 8
-int8 PIN_CONF_OUT1 = 9
-int8 PIN_CONF_OUT2 = 10
-int8 PIN_CONF_OUT3 = 11
-int8 PIN_CONF_OUT4 = 12
-int8 PIN_CONF_OUT5 = 13
-int8 PIN_CONF_OUT6 = 14
-int8 PIN_CONF_OUT7 = 15
-
 # digital tool output
-int8 PIN_TOOL_DOUT0 = 16
-int8 PIN_TOOL_DOUT1 = 17
+int8 PIN_TOOL_DOUT0 = 8
+int8 PIN_TOOL_DOUT1 = 9
+int8 PIN_TOOL_DOUT2 = 10
+int8 PIN_TOOL_DOUT3 = 11
 
 # valid function values
 #

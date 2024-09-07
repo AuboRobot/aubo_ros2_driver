@@ -1,0 +1,15 @@
+repositories:
+    # Keep moveit_* repos here because they are released with moveit
+    moveit2:
+        type: git
+        url: https://githubfast.com/ros-planning/moveit2.git
+        version: iron
+    moveit_msgs:
+        type: git
+        url: https://githubfast.com/ros-planning/moveit_msgs.git
+        version: iron
+    moveit_visual_tools:
+        type: git
+        url: https://githubfast.com/ros-planning/moveit_visual_tools.git
+        version: ros2
+

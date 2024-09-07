@@ -1,0 +1,4 @@
+int8      signal_name_index      # A string uniquely identifying the signal
+int32       value            # An integer which must be a valid word (0-65535)
+---
+bool        success

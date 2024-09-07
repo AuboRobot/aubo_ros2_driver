@@ -1,0 +1,17 @@
+#____________________________________________________________________________________________
+# This service registers the Modbus signal. 
+#____________________________________________________________________________________________
+int8 TYPE_DIGITAL_INPUT = 0
+int8 TYPE_DIGITAL_OUTPUT = 1
+int8 TYPE_REGISTER_INPUT = 2
+int8 TYPE_REGISTER_OUTPUT = 3
+
+#string      device_info       # rtu format,eg,"serial_port,baud,parity,data_bit,stop_bit"  
+int32       slave_number      # between 0 and 255 
+int32       signal_address   # An integer specifying the address of the either the coil or the register
+int8        signal_type      # 0 = digital input, 1 = digital output, 2 = register input and 3 = register output
+int8      signal_name_index      # A string uniquely identifying the signal
+#bool        sequential_mode  # Setting to True forces the modbus client to wait for a response before sending the next request
+
+---
+bool success

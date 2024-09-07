@@ -1,0 +1,4 @@
+int8     signal_name_index      # A string uniquely identifying the signal
+int8       update_frequency            # An integer in the range 0-125 specifying the update frequency in Hz
+---
+bool       success

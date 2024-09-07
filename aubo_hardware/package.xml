@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>aubo_hardware</name>
+  <version>0.0.0</version>
+  <description>Driver for aubo robots for ros2_control.</description>
+
+  <maintainer email="jipeng@aubo-robotics.cn">jipeng</maintainer>
+
+  <license>BSD-3-Clause</license>
+
+
+  <author>jipeng</author>
+  <author>zhangduo</author>
+
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <depend>controller_manager</depend>
+  <depend>controller_manager_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>rclpy</depend>
+  <depend>ros2_control</depend>
+  <depend>ros2_controllers</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2_geometry_msgs</depend>
+  
+  <depend>aubo_controllers</depend>
+  <depend>aubo_description</depend>
+  <depend>aubo_msgs</depend>
+  <exec_depend>force_torque_sensor_broadcaster</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>position_controllers</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ros2_controllers_test_nodes</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>socat</exec_depend>
+  <exec_depend>urdf</exec_depend>
+  <exec_depend>velocity_controllers</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+
+</package>

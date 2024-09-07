@@ -1,0 +1,3 @@
+int8      signal_name_index      # A string uniquely identifying the signal
+---
+bool success
