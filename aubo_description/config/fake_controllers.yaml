@@ -1,0 +1,14 @@
+controller_names:
+  - joint_trajectory_controller
+
+joint_trajectory_controller:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+    - shoulder_joint
+    - foreArm_joint
+    - upperArm_joint
+    - wrist1_joint
+    - wrist2_joint
+    - wrist3_joint

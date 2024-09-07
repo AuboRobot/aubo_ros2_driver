@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="aubo">
+
+  <xacro:arg name="name" default="aubo"/>
+  <xacro:arg name="tf_prefix" default="" />
+  <xacro:arg name="description_package" default="aubo_description" />
+
+  <xacro:property name="description_package" value="$(arg description_package)"/>
+  <xacro:include filename="$(find ${description_package})/srdf/aubo_macro.srdf.xacro"/>
+
+  <xacro:aubo_srdf name="$(arg name)" tf_prefix="$(arg tf_prefix)"/>
+
+</robot>

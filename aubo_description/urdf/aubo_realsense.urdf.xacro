@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="aubo">
+   <!-- robot name parameter -->
+   <xacro:arg name="name" default="aubo"/>
+
+  <xacro:include filename="$(find aubo_description)/urdf/thirdparts/aubo_d435_camera.urdf.xacro"/>
+   <!-- the default value should raise an error in case this was called without defining the type -->
+   <xacro:arg name="aubo_type" default="aubo_C3"/>
+
+   <!-- parameters -->
+   <xacro:arg name="tf_prefix" default="" />
+   <xacro:arg name="transmission_hw_interface" default=""/>
+
+   <!-- ros2_control related parameters -->
+   <xacro:arg name="robot_ip" default="127.0.0.1" />
+   <xacro:arg name="base_frame_file" default="$(find aubo_description)/config/base_frame.yaml" />
+
+
+   <!--   io communication related parameters-->
+  <xacro:arg name="rtu_device_name" default="/dev/ttyS7,115200,N,8,1" />
+  <!-- Simulation parameters -->
+   <xacro:arg name="use_fake_hardware" default="true" />
+   <xacro:arg name="fake_sensor_commands" default="false" />
+   <xacro:arg name="sim_gazebo" default="false" />
+   <xacro:arg name="sim_ignition" default="false" />
+   <xacro:arg name="simulation_controllers" default="" />
+
+   <!-- initial position for simulations (Fake Hardware, Gazebo, Ignition) -->
+   <xacro:arg name="initial_positions_file" default="$(find aubo_description)/config/initial_positions.yaml"/>
+
+   <!-- convert to property to use substitution in function -->
+   <xacro:property name="initial_positions_file" default="$(arg initial_positions_file)"/>
+   <xacro:property name="base_frame_file" value="$(arg base_frame_file)"/>
+   <xacro:property name="base_frame" value="${xacro.load_yaml(base_frame_file)['base_frame']}"/>
+  <!-- import main macro -->
+   <xacro:include filename="$(find aubo_description)/urdf/$(arg aubo_type).xacro"/>
+   <!-- create link fixed to the "world" -->
+   <link name="world" />
+   <!--/////////////////////////////// WORLD_JOINT ////////////////////////////////////-->
+
+  <joint name="world_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="world" />
+    <child link = "aubo_base" />
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0" />
+  </joint>
+
+<!--/////////////////////////////// pedestal_Link ////////////////////////////////////-->
+
+ <!-- <link name="pedestal_Link">
+   <visual>
+    <geometry>
+      <box size="1.0 1.0 0.05" />
+    </geometry>
+    <material name="">
+       <color rgba="0.96 0.96 0.96 1" />
+    </material>
+   </visual>
+  </link> -->
+
+<!--/////////////////////////////// pedestal_JOINIT ////////////////////////////////////-->
+
+<!-- <joint name="pedestal_joint" type="fixed">
+   <origin xyz="0 0 0.025" rpy="0 0 0" />
+   <parent link="pedestal_Link" />
+   <child link = "aubo_base" />
+   <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0" />
+ </joint> -->
+
+   <!-- arm -->
+   <xacro:aubo_robot
+     name="$(arg name)"
+     aubo_type="$(arg aubo_type)"
+     tf_prefix="$(arg tf_prefix)"
+     parent="world"
+     transmission_hw_interface="$(arg transmission_hw_interface)"
+     use_fake_hardware="$(arg use_fake_hardware)"
+     fake_sensor_commands="$(arg fake_sensor_commands)"
+     sim_gazebo="$(arg sim_gazebo)"
+     sim_ignition="$(arg sim_ignition)"
+     initial_positions="${xacro.load_yaml(initial_positions_file)}"
+     robot_ip="$(arg robot_ip)"
+     rtu_device_name="$(arg rtu_device_name)"
+     >
+     <origin xyz="${base_frame['x']} ${base_frame['y']} ${base_frame['z']}"
+            rpy="${base_frame['roll']} ${base_frame['pitch']} ${base_frame['yaw']}"
+ />          <!-- position robot in the world -->
+   </xacro:aubo_robot>
+
+   <xacro:if value="$(arg sim_gazebo)">
+    <!-- Gazebo plugins -->
+    <gazebo reference="world">
+    </gazebo>
+    <gazebo>
+      <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+        <parameters>$(arg simulation_controllers)</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+
+  <xacro:if value="$(arg sim_ignition)">
+    <!-- Gazebo plugins -->
+    <gazebo reference="world">
+    </gazebo>
+    <gazebo>
+      <plugin filename="libign_ros2_control-system.so" name="ign_ros2_control::IgnitionROS2ControlPlugin">
+        <parameters>$(arg simulation_controllers)</parameters>
+        <controller_manager_node_name>$(arg tf_prefix)controller_manager</controller_manager_node_name>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+
+</robot>

@@ -1,0 +1,20 @@
+/**:
+  ros__parameters:
+    moveit_controller_manager:
+        moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+    moveit_simple_controller_manager:
+      controller_names:
+        - joint_trajectory_controller
+
+      joint_trajectory_controller:
+        action_ns: follow_joint_trajectory
+        type: FollowJointTrajectory
+        default: true
+        joints:
+          - $(var tf_prefix)shoulder_joint
+          - $(var tf_prefix)foreArm_joint
+          - $(var tf_prefix)upperArm_joint
+          - $(var tf_prefix)wrist1_joint
+          - $(var tf_prefix)wrist2_joint
+          - $(var tf_prefix)wrist3_joint

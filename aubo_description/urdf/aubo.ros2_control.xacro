@@ -1,0 +1,212 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="aubo_ros2_control" params="
+    name 
+    use_fake_hardware:=false fake_sensor_commands:=false
+    sim_gazebo:=false
+    sim_ignition:=false
+    tf_prefix  
+    robot_ip
+    initial_positions:=${dict(shoulder_joint=0.0,upperArm_joint=-0.26179,foreArm_joint=1.74532,wrist1_joint=0.436,wrist2_joint=1.57,wrist3_joint=0.0)}
+    rtu_device_name 
+    ">
+      <ros2_control name="${name}" type="system">
+        <hardware>
+            <xacro:if value="${sim_gazebo}">
+              <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+            </xacro:if>
+            <xacro:if value="${sim_ignition}">
+              <plugin>ign_ros2_control/IgnitionSystem</plugin>
+            </xacro:if>
+            <xacro:if value="${use_fake_hardware}">
+              <plugin>mock_components/GenericSystem</plugin>
+              <param name="fake_sensor_commands">${fake_sensor_commands}</param>
+              <param name="state_following_offset">0.0</param>
+            </xacro:if>
+            <xacro:unless value="${use_fake_hardware or sim_gazebo or sim_ignition}">
+                <!-- physical hardware or ARCS aubo_scope simulation -->
+              <plugin>aubo_hardware/AuboHardwareInterface</plugin>
+              <param name="robot_ip">${robot_ip}</param>
+              <param name="tf_prefix">${tf_prefix}</param>
+              <param name="rtu_device_name">${rtu_device_name}</param>
+            </xacro:unless>
+        </hardware>
+            <joint name="${tf_prefix}shoulder_joint">
+                <command_interface name="position" />
+                    
+                        <param name="min">-3.05</param>
+                        <param name="max">3.05</param>
+                    
+                <command_interface name="velocity"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['shoulder_joint']}</param>
+                </state_interface>
+                <state_interface name="velocity">
+                    <param name="initial_value">0.0</param>
+                </state_interface>
+                <!-- <state_interface name="effort">
+                    <param name="initial_value">0.0</param>
+                </state_interface> -->
+            </joint>
+            <joint name="${tf_prefix}upperArm_joint">
+                <command_interface name="position" />
+                    
+                        <param name="min">-3.05</param>
+                        <param name="max">3.05</param>
+                    
+                <command_interface name="velocity"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['upperArm_joint']}</param>
+                </state_interface>
+                <state_interface name="velocity">
+                    <param name="initial_value">0.0</param>
+                </state_interface>
+                <!-- <state_interface name="effort">
+                    <param name="initial_value">0.0</param>
+                </state_interface> -->
+            </joint>
+            <joint name="${tf_prefix}foreArm_joint">
+                <command_interface name="position" />
+                    
+                        <param name="min">-2.41</param>
+                        <param name="max">2.41</param>
+                    
+                <command_interface name="velocity"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['foreArm_joint']}</param>
+                </state_interface>
+                <state_interface name="velocity">
+                    <param name="initial_value">0.0</param>
+                </state_interface>
+                <!-- <state_interface name="effort">
+                    <param name="initial_value">0.0</param>
+                </state_interface> -->
+            </joint>
+            <joint name="${tf_prefix}wrist1_joint">
+                <command_interface name="position" />
+                    
+                        <param name="min">-2.66</param>
+                        <param name="max">2.66</param>
+                    
+                <command_interface name="velocity"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['wrist1_joint']}</param>
+                </state_interface>
+                <state_interface name="velocity">
+                    <param name="initial_value">0.0</param>
+                </state_interface>
+                <!-- <state_interface name="effort">
+                    <param name="initial_value">0.0</param>
+                </state_interface> -->
+            </joint>
+            <joint name="${tf_prefix}wrist2_joint">
+                <command_interface name="position" />
+                    
+                        <param name="min">-3.05</param>
+                        <param name="max">3.05</param>
+                    
+                <command_interface name="velocity"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['wrist2_joint']}</param>
+                </state_interface>
+                <state_interface name="velocity">
+                    <param name="initial_value">0.0</param>
+                </state_interface>
+                <!-- <state_interface name="effort">
+                    <param name="initial_value">0.0</param>
+                </state_interface> -->
+            </joint>
+            <joint name="${tf_prefix}wrist3_joint">
+                <command_interface name="position" />
+                    
+                        <param name="min">-2.23</param>
+                        <param name="max">2.23</param>
+                    
+                <command_interface name="velocity"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['wrist3_joint']}</param>
+                </state_interface>
+                <state_interface name="velocity">
+                    <param name="initial_value">0.0</param>
+                </state_interface>
+                <!-- <state_interface name="effort">
+                    <param name="initial_value">0.0</param>
+                </state_interface> -->
+            </joint>
+            
+            <gpio name="${tf_prefix}gpio">
+                <command_interface name="standard_digital_output_cmd_0"/>
+                <command_interface name="standard_digital_output_cmd_1"/>
+                <command_interface name="standard_digital_output_cmd_2"/>
+                <command_interface name="standard_digital_output_cmd_3"/>
+                <command_interface name="standard_digital_output_cmd_4"/>
+                <command_interface name="standard_digital_output_cmd_5"/>
+                <command_interface name="standard_digital_output_cmd_6"/>
+                <command_interface name="standard_digital_output_cmd_7"/>
+                <command_interface name="standard_digital_output_cmd_8"/>
+                <command_interface name="standard_digital_output_cmd_9"/>
+                <command_interface name="standard_digital_output_cmd_10"/>
+                <command_interface name="standard_digital_output_cmd_11"/>
+
+
+                <command_interface name="standard_analog_output_cmd_0"/>
+                <command_interface name="standard_analog_output_cmd_1"/>
+
+
+                <command_interface name="io_async_success"/>
+
+                <state_interface name="digital_output_0"/>
+                <state_interface name="digital_output_1"/>
+                <state_interface name="digital_output_2"/>
+                <state_interface name="digital_output_3"/>
+                <state_interface name="digital_output_4"/>
+                <state_interface name="digital_output_5"/>
+                <state_interface name="digital_output_6"/>
+                <state_interface name="digital_output_7"/>
+                <state_interface name="digital_output_8"/>
+                <state_interface name="digital_output_9"/>
+                <state_interface name="digital_output_10"/>
+                <state_interface name="digital_output_11"/>
+
+
+                <state_interface name="digital_input_0"/>
+                <state_interface name="digital_input_1"/>
+                <state_interface name="digital_input_2"/>
+                <state_interface name="digital_input_3"/>
+                <state_interface name="digital_input_4"/>
+                <state_interface name="digital_input_5"/>
+                <state_interface name="digital_input_6"/>
+                <state_interface name="digital_input_7"/>
+                <state_interface name="digital_input_8"/>
+                <state_interface name="digital_input_9"/>
+                <state_interface name="digital_input_10"/>
+                <state_interface name="digital_input_11"/>
+
+                <state_interface name="standard_analog_output_0"/>
+                <state_interface name="standard_analog_output_1"/>
+
+                <state_interface name="standard_analog_input_0"/>
+                <state_interface name="standard_analog_input_1"/>
+
+
+                <state_interface name="tool_analog_input_0"/>
+                <state_interface name="tool_analog_input_1"/>
+
+            </gpio>
+
+            <gpio name="${tf_prefix}payload">
+                <command_interface name="mass"/>
+                <command_interface name="cog.x"/>
+                <command_interface name="cog.y"/>
+                <command_interface name="cog.z"/>
+                <command_interface name="payload_async_success"/>
+            </gpio>
+
+            <gpio name="${tf_prefix}system_interface">
+                <state_interface name="initialized"/>
+            </gpio>
+        </ros2_control>
+
+    </xacro:macro>
+
+</robot>
