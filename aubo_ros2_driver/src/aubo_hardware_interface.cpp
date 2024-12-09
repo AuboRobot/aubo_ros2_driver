@@ -179,7 +179,6 @@ return_type AuboHardwareInterface::stop()
 return_type AuboHardwareInterface::read()
 {
     readActualQ();
-    std::cout << "read--------------------" << std::endl;
     if (!initialized_) {
         //获取初始状态
         aubo_position_commands_ = actual_q_copy_;
@@ -189,8 +188,7 @@ return_type AuboHardwareInterface::read()
 }
 return_type AuboHardwareInterface::write()
 {
-    Servoj(aubo_position_commands_);
-    std::cout << "write--------------------" << std::endl;
+    Servoj(aubo_position_commands_);    
     return return_type::OK;
 }
 
@@ -210,7 +208,7 @@ void AuboHardwareInterface::readActualQ()
     joint_velocity_ = rpc_client_->getRobotInterface(robot_name_)
                           ->getRobotState()
                           ->getJointSpeeds();
-    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+   
     joint_velocity_copy_[0] = joint_velocity_[0];
     joint_velocity_copy_[1] = joint_velocity_[1];
     joint_velocity_copy_[2] = joint_velocity_[2];
@@ -299,12 +297,21 @@ int AuboHardwareInterface::Servoj(
     for (size_t i = 0; i < traj.size(); i++) {
         traj[i] = joint_position_command[i];
     }
+    
+     if(!rpc_client_->getRobotInterface(robot_name)
+                ->getMotionControl()
+                ->isServoModeEnabled()){
+                
+        rpc_client_->getRobotInterface(robot_name)
+        ->getMotionControl()
+        ->setServoMode(true);           
+    }
 
     // 接口调用: 关节运动
     int servoJoint_num = rpc_client_->getRobotInterface(robot_name)
                              ->getMotionControl()
                              ->servoJoint(traj, 0.2, 0.2, 0.005, 0.1, 200);
-    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
 
     //    std::cout << "servoJoint finish!" << std::endl;
 
