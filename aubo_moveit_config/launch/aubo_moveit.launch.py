@@ -219,8 +219,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "moveit_config_file",
             description="Name of the SRDF file",
-            default_value="aubo_i5.srdf",
-            choices=["aubo_iS7_CM02.srdf","aubo_i5.srdf"],
+            default_value="aubo_robot.srdf",
+            choices=["aubo_robot.srdf"],
         )
     )
 

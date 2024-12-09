@@ -15,24 +15,23 @@ set(ENV{CPM_SOURCE_CACHE} $ENV{HOME}/.cache/CPM)
 # 下载 aubo_sdk 发布包(二进制方式引入)
     if(NOT aubo_sdk_POPULATED)
         include(FetchContent)
+		if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+			# 使用 ARM64 版本 SDK 的 URL
+			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.24.1-rc.3-Linux_aarch64+318754d.zip")
+		else()
+			# 使用 x86_64 版本 SDK 的 URL
+			# set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.22.1-Linux_x86_64+2ed0c14.zip")
+			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.24.1-rc.3-Linux_x86_64+318754d.zip")
+		endif()
+		
         FetchContent_Declare(
             aubo_sdk
-            #URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.19.2-Linux_x86_64+a90aefb.zip"
-            #URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.20.0-Linux_x86_64+fc5de97.zip"
-            #URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.21.0-Linux_x86_64+6e3177c.zip"
-            URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.22.1-Linux_x86_64+2ed0c14.zip"
+			URL ${SDK_URL}
         )
         FetchContent_Populate(aubo_sdk)
     endif()
 set(aubo_sdk_DIR ${aubo_sdk_SOURCE_DIR}/lib/cmake/aubo_sdk)
 message("aubo_sdk_DIR" ${aubo_sdk_SOURCE_DIR}/lib/cmake/aubo_sdk)
-# 下载 aubo_sdk 发布包(源码方式引入)
-#CPMAddPackage(
-#          NAME aubo_sdk
-#          GIT_REPOSITORY "http://git.aubo-robotics.cn:8001/arcs/aubo_sdk.git"
-#          GIT_TAG master
-#        )
-
 
 message("aubo_sdk_SOURCE_DIR ${aubo_sdk_SOURCE_DIR}")
 
