@@ -37,6 +37,13 @@ bool AuboHardwareInterface::OnActive()
         }
     });
     robot_name_ = rpc_client_->getRobotNames().front();
+
+    rpc_client_->getRobotInterface(robot_name_)
+    ->getRobotConfig()
+    ->setHardwareCustomParameters("[joint_func] \n vff_enable = false\n");
+
+    std::cout << "vff_enable = false" << std::endl;
+
     // 设置rtde输入
     setInput(rtde_client_);
 
@@ -164,11 +171,21 @@ hardware_interface::return_type AuboHardwareInterface::read(
 hardware_interface::return_type AuboHardwareInterface::write(
     const rclcpp::Time &time, const rclcpp::Duration &period)
 {
-    if (1) {
+    if (robot_mode_ == RobotModeType::Running && (safety_mode_ == 
+        SafetyModeType::Normal || safety_mode_ == SafetyModeType::ReducedMode)) {
         try {
             Servoj(aubo_position_commands_);
         } catch (const std::exception &e) {
         }
+    }else{
+        // 机器人状态异常
+        RCLCPP_WARN_STREAM(
+            rclcpp::get_logger("AuboHardwareInterface"),
+            "Robot not in valid state for motion command. Plz check&fix robot status firstly then restart driver"
+            << "robot_mode_: " << static_cast<int>(robot_mode_)
+            << ", safety_mode_: " << static_cast<int>(safety_mode_));
+
+        return hardware_interface::return_type::ERROR;
     }
 
     return hardware_interface::return_type::OK;
@@ -289,10 +306,16 @@ int AuboHardwareInterface::Servoj(
         ->getMotionControl()
         ->setServoMode(true);           
     }
-    // 接口调用: 关节运动
-    int servoJoint_num = rpc_client_->getRobotInterface(robot_name)
-                             ->getMotionControl()
-                             ->servoJoint(traj, 0.2, 0.2, 0.01, 0.1, 200);
+    // 接口调用: servoJoint
+    while (true) {
+        int servoJoint_num = rpc_client_->getRobotInterface(robot_name)
+                                ->getMotionControl()
+                                ->servoJoint(traj, 0.2, 0.2, 0.01, 0.1, 200);
+        if(servoJoint_num != 2){
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
 
     return 0;
 }
