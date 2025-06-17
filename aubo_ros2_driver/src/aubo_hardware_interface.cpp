@@ -179,6 +179,12 @@ hardware_interface::return_type AuboHardwareInterface::write(
         }
     }else{
         // 机器人状态异常
+        RCLCPP_WARN_STREAM(
+            rclcpp::get_logger("AuboHardwareInterface"),
+            "Robot not in valid state for motion command. Plz check&fix robot status firstly then restart driver"
+            << "robot_mode_: " << static_cast<int>(robot_mode_)
+            << ", safety_mode_: " << static_cast<int>(safety_mode_));
+
         return hardware_interface::return_type::ERROR;
     }
 
