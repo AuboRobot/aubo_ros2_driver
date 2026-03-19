@@ -2,9 +2,9 @@
 #include <memory>
 
 // ROS includes
-#include "controller_manager/controller_manager.hpp"
+#include "controller_manager/controller_manager/controller_manager.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "realtime_tools/thread_priority.hpp"
+#include "realtime_tools/realtime_helpers.hpp"
 
 int main(int argc, char **argv)
 {

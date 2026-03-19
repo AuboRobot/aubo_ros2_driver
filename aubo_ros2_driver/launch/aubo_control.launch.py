@@ -1,6 +1,10 @@
+from pathlib import Path
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, TimerAction
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessStart
 from launch.substitutions import (
     Command,
     FindExecutable,
@@ -8,7 +12,150 @@ from launch.substitutions import (
     PathJoinSubstitution,
 )
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
+
+
+def _ensure_description_xacro(description_share: str, aubo_type: str) -> None:
+    urdf_dir = Path(description_share) / "urdf"
+    target = urdf_dir / f"{aubo_type}.urdf.xacro"
+    source = urdf_dir / f"{aubo_type}.urdf"
+
+    if target.exists():
+        return
+
+    if not source.exists():
+        raise FileNotFoundError(
+            f"Missing both '{target.name}' and fallback source '{source.name}' in {urdf_dir}"
+        )
+
+    lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    if len(lines) >= 2 and "xmlns:xacro" not in lines[1]:
+        lines[1] = lines[1].replace(">", ' xmlns:xacro="http://wiki.ros.org/xacro">', 1)
+    lines = [line for line in lines if "<property" not in line]
+    target.write_text("".join(lines), encoding="utf-8")
+
+
+def launch_setup(context, *args, **kwargs):
+    del args
+    del kwargs
+
+    runtime_config_package = LaunchConfiguration("runtime_config_package")
+    controllers_file = LaunchConfiguration("controllers_file")
+    description_package_cfg = LaunchConfiguration("description_package")
+    moveit_config_package = LaunchConfiguration("moveit_config_package")
+    description_file_cfg = LaunchConfiguration("description_file")
+    prefix = LaunchConfiguration("prefix")
+    use_fake_hardware = LaunchConfiguration("use_fake_hardware")
+    fake_sensor_commands = LaunchConfiguration("fake_sensor_commands")
+    robot_ip = LaunchConfiguration("robot_ip")
+    aubo_type = LaunchConfiguration("aubo_type")
+    initial_joint_controller = LaunchConfiguration("initial_joint_controller")
+    launch_rviz = LaunchConfiguration("launch_rviz")
+
+    description_package = description_package_cfg.perform(context)
+    description_share = get_package_share_directory(description_package)
+    _ensure_description_xacro(description_share, aubo_type.perform(context))
+
+    robot_description_content = Command(
+        [
+            PathJoinSubstitution([FindExecutable(name="xacro")]),
+            " ",
+            str(Path(description_share) / "urdf" / "xacro" / "inc" / description_file_cfg.perform(context)),
+            " ",
+            "prefix:=",
+            prefix,
+            " ",
+            "use_fake_hardware:=",
+            use_fake_hardware,
+            " ",
+            "fake_sensor_commands:=",
+            fake_sensor_commands,
+            " ",
+            "robot_ip:=",
+            robot_ip,
+            " ",
+            "aubo_type:=",
+            aubo_type,
+            " ",
+           
+        ]
+    )
+    robot_description = {"robot_description": robot_description_content}
+
+    robot_controllers = PathJoinSubstitution(
+        [get_package_share_directory(runtime_config_package.perform(context)), "config", controllers_file]
+    )
+
+    rviz_config_file = PathJoinSubstitution(
+        [get_package_share_directory(moveit_config_package.perform(context)), "config", "moveit.rviz"]
+    )
+
+    control_node = Node(
+        package="controller_manager",
+        executable="ros2_control_node",
+        parameters=[robot_description, robot_controllers],
+        output="both",
+    )
+    robot_state_publisher_node = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="both",
+        parameters=[robot_description],
+    )
+
+    rviz_node = Node(
+        package="rviz2",
+        condition=IfCondition(launch_rviz),
+        executable="rviz2",
+        name="rviz2",
+        output="log",
+        arguments=["-d", rviz_config_file],
+    )
+
+    joint_state_broadcaster_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "joint_state_broadcaster",
+            "--controller-manager",
+            "/controller_manager",
+            "--controller-manager-timeout",
+            "120",
+        ],
+    )
+
+    initial_joint_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            initial_joint_controller,
+            "--controller-manager",
+            "/controller_manager",
+            "--controller-manager-timeout",
+            "120",
+        ],
+    )
+
+    delayed_controller_spawners = RegisterEventHandler(
+        OnProcessStart(
+            target_action=control_node,
+            on_start=[
+                TimerAction(
+                    period=2.0,
+                    actions=[
+                        joint_state_broadcaster_spawner,
+                        initial_joint_controller_spawner,
+                    ],
+                )
+            ],
+        )
+    )
+
+    return [
+        control_node,
+        robot_state_publisher_node,
+        rviz_node,
+        delayed_controller_spawners,
+    ]
 
 
 def generate_launch_description():
@@ -111,101 +258,4 @@ def generate_launch_description():
         )
     )
 
-    # Initialize Arguments
-    runtime_config_package = LaunchConfiguration("runtime_config_package")
-    controllers_file = LaunchConfiguration("controllers_file")
-    description_package = LaunchConfiguration("description_package")
-    moveit_config_package = LaunchConfiguration("moveit_config_package")
-    description_file = LaunchConfiguration("description_file")
-    prefix = LaunchConfiguration("prefix")
-    use_fake_hardware = LaunchConfiguration("use_fake_hardware")
-    fake_sensor_commands = LaunchConfiguration("fake_sensor_commands")
-    robot_ip = LaunchConfiguration("robot_ip")
-    aubo_type = LaunchConfiguration("aubo_type")
-    initial_joint_controller = LaunchConfiguration("initial_joint_controller")
-    launch_rviz = LaunchConfiguration("launch_rviz")
-
-    robot_description_content = Command(
-        [
-            PathJoinSubstitution([FindExecutable(name="xacro")]),
-            " ",
-            PathJoinSubstitution(
-                [FindPackageShare(description_package), "urdf/xacro/inc/", description_file]
-            ),
-            " ",
-            "prefix:=",
-            prefix,
-            " ",
-            "use_fake_hardware:=",
-            use_fake_hardware,
-            " ",
-            "fake_sensor_commands:=",
-            fake_sensor_commands,
-            " ",
-            "robot_ip:=",
-            robot_ip,
-            " ",
-            "aubo_type:=",
-            aubo_type,
-            " ",
-           
-        ]
-    )
-    robot_description = {"robot_description": robot_description_content}
-
-    robot_controllers = PathJoinSubstitution(
-        [FindPackageShare(runtime_config_package), "config", controllers_file]
-    )
-
-    rviz_config_file = PathJoinSubstitution(
-        [FindPackageShare(moveit_config_package), "rviz", "moveit.rviz"]
-    )
-
-    
-    aubo_control_node = Node(
-        package="aubo_ros2_driver",
-        executable="aubo_ros2_control_node",
-        parameters=[robot_description, robot_controllers],
-        output="both",
-    )
-    robot_state_publisher_node = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        output="both",
-        parameters=[robot_description],
-    )
-
-    rviz_node = Node(
-        package="rviz2",
-        condition=IfCondition(launch_rviz),
-        executable="rviz2",
-        name="rviz2",
-        output="log",
-        arguments=["-d", rviz_config_file],
-    )
-
-    joint_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "joint_state_broadcaster",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-    )
-
-    initial_joint_controller_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[initial_joint_controller, "-c", "/controller_manager"],
-    )
-
-    nodes_to_start = [
-        aubo_control_node,
-        robot_state_publisher_node,
-        rviz_node,
-        joint_state_broadcaster_spawner,
-        initial_joint_controller_spawner,
-    ]
-
-    return LaunchDescription(declared_arguments + nodes_to_start)
+    return LaunchDescription(declared_arguments + [OpaqueFunction(function=launch_setup)])

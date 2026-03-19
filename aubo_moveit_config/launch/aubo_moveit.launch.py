@@ -1,229 +1,171 @@
+import os
+from pathlib import Path
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.actions import OpaqueFunction
-from launch.substitutions import (
-    Command,
-    FindExecutable,
-    LaunchConfiguration,
-    PathJoinSubstitution,
-)
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
-import os
+from moveit_configs_utils import MoveItConfigsBuilder
 import yaml
 
 
-def load_yaml(package_name, file_path):
-    package_path = get_package_share_directory(package_name)
-    absolute_file_path = os.path.join(package_path, file_path)
+def _ensure_description_xacro(description_share: str, aubo_type: str) -> None:
+    urdf_dir = Path(description_share) / "urdf"
+    target = urdf_dir / f"{aubo_type}.urdf.xacro"
+    source = urdf_dir / f"{aubo_type}.urdf"
 
-    try:
-        with open(absolute_file_path, "r") as file:
-            return yaml.safe_load(file)
-    except EnvironmentError:  # parent of IOError, OSError *and* WindowsError where available
-        return None
+    if target.exists():
+        return
+
+    if not source.exists():
+        raise FileNotFoundError(
+            f"Missing both '{target.name}' and fallback source '{source.name}' in {urdf_dir}"
+        )
+
+    lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    if len(lines) >= 2 and "xmlns:xacro" not in lines[1]:
+        lines[1] = lines[1].replace(">", ' xmlns:xacro="http://wiki.ros.org/xacro">', 1)
+    lines = [line for line in lines if "<property" not in line]
+    target.write_text("".join(lines), encoding="utf-8")
 
 
 def launch_setup(context, *args, **kwargs):
-    # Command-line arguments
-    robot_xacro_file = LaunchConfiguration("robot_xacro_file")
-    support_package = LaunchConfiguration("support_package")
-    moveit_config_package = LaunchConfiguration("moveit_config_package")
-    moveit_config_file = LaunchConfiguration("moveit_config_file")
+    del args
+    del kwargs
+
+    description_package = LaunchConfiguration("description_package").perform(context)
+    moveit_config_package = LaunchConfiguration("moveit_config_package").perform(
+        context
+    )
+    description_file = LaunchConfiguration("description_file").perform(context)
     aubo_type = LaunchConfiguration("aubo_type")
+    launch_rviz = LaunchConfiguration("launch_rviz")
+    moveit_config_file = LaunchConfiguration("moveit_config_file").perform(context)
+    if not moveit_config_file:
+        moveit_config_file = "config/aubo_robot.srdf"
 
-    # Planning context
-    robot_description_content = Command(
-        [
-            PathJoinSubstitution([FindExecutable(name="xacro")]),
-            " ",
-            PathJoinSubstitution(
-                [FindPackageShare(support_package), "urdf/xacro/inc/", robot_xacro_file]
+    description_share = get_package_share_directory(description_package)
+    moveit_share = get_package_share_directory(moveit_config_package)
+    _ensure_description_xacro(description_share, aubo_type.perform(context))
+
+    moveit_config = (
+        MoveItConfigsBuilder("aubo", package_name=moveit_config_package)
+        .robot_description(
+            file_path=os.path.join(
+                description_share, "urdf/xacro/inc", description_file
             ),
-            " ",
-            "aubo_type:=",
-             aubo_type,
-            " ",
-        ]
-    )
-    robot_description = {"robot_description": robot_description_content}
-
-    robot_description_semantic_content = Command(
-        [
-            PathJoinSubstitution([FindExecutable(name="xacro")]),
-            " ",
-            PathJoinSubstitution(
-                [FindPackageShare(moveit_config_package), "config", moveit_config_file]
-            ),
-        ]
-    )
-    robot_description_semantic = {
-        "robot_description_semantic": robot_description_semantic_content.perform(
-            context
+            mappings={
+                "aubo_type": aubo_type,
+            },
         )
-    }
-
-    kinematics_yaml = load_yaml(
-        "aubo_moveit_config", "config/kinematics.yaml"
-    )
-
-    joint_limits_yaml = {
-        "robot_description_planning": load_yaml(
-            "aubo_moveit_config", "config/joint_limits.yaml"
+        .robot_description_semantic(
+            file_path=os.path.join(moveit_share, moveit_config_file)
         )
-    }
-
-    # Planning Functionality
-    ompl_planning_pipeline_config = {
-        "move_group": {
-            "planning_plugin": "ompl_interface/OMPLPlanner",
-            "request_adapters": """default_planner_request_adapters/AddTimeOptimalParameterization default_planner_request_adapters/ResolveConstraintFrames default_planner_request_adapters/FixWorkspaceBounds default_planner_request_adapters/FixStartStateBounds default_planner_request_adapters/FixStartStateCollision default_planner_request_adapters/FixStartStatePathConstraints""",
-            "start_state_max_bounds_error": 0.1,
-            "sample_duration": 0.005,
-        }
-    }
-    ompl_planning_yaml = load_yaml(
-        "aubo_moveit_config", "config/ompl_planning.yaml"
+        .robot_description_kinematics(
+            file_path=os.path.join(moveit_share, "config", "kinematics.yaml")
+        )
+        .joint_limits(
+            file_path=os.path.join(moveit_share, "config", "joint_limits.yaml")
+        )
+        .planning_pipelines(default_planning_pipeline="ompl", pipelines=["ompl"])
+        .trajectory_execution(
+            file_path=os.path.join(moveit_share, "config", "moveit_controllers.yaml"),
+            moveit_manage_controllers=False,
+        )
+        .planning_scene_monitor(
+            publish_planning_scene=True,
+            publish_geometry_updates=True,
+            publish_state_updates=True,
+            publish_transforms_updates=True,
+            publish_robot_description=True,
+            publish_robot_description_semantic=True,
+        )
+        .to_moveit_configs()
     )
-    ompl_planning_pipeline_config["move_group"].update(ompl_planning_yaml)
 
-    # Trajectory Execution Functionality
-    moveit_simple_controllers_yaml = load_yaml(
-        "aubo_moveit_config", "config/moveit_controllers.yaml"
+    moveit_controllers_path = os.path.join(
+        moveit_share, "config", "moveit_controllers.yaml"
     )
-    moveit_controllers = {
-        "moveit_simple_controller_manager": moveit_simple_controllers_yaml,
-        "moveit_controller_manager": "moveit_simple_controller_manager/MoveItSimpleControllerManager",
-    }
+    with open(moveit_controllers_path, "r", encoding="utf-8") as controllers_file:
+        moveit_simple_controller_manager = yaml.safe_load(controllers_file)
 
-    trajectory_execution = {
-        # MoveIt does not handle controller switching automatically
-        "moveit_manage_controllers": False,
-        "trajectory_execution.allowed_execution_duration_scaling": 1.2,
-        "trajectory_execution.allowed_goal_duration_margin": 0.5,
-        "trajectory_execution.allowed_start_tolerance": 0.01,
-    }
-
-    planning_scene_monitor_parameters = {
-        "publish_planning_scene": True,
-        "publish_geometry_updates": True,
-        "publish_state_updates": True,
-        "publish_transforms_updates": True,
-        "planning_scene_monitor_options": {
-            "name": "planning_scene_monitor",
-            "robot_description": "robot_description",
-            "joint_state_topic": "/joint_states",
-            "attached_collision_object_topic": "/move_group/planning_scene_monitor",
-            "publish_planning_scene_topic": "/move_group/publish_planning_scene",
-            "monitored_planning_scene_topic": "/move_group/monitored_planning_scene",
-            "wait_for_initial_state_timeout": 10.0,
-           }
-    }
-
-    # Start the actual move_group node/action server
     move_group_node = Node(
         package="moveit_ros_move_group",
         executable="move_group",
         output="screen",
         parameters=[
-            robot_description,
-            robot_description_semantic,
-            kinematics_yaml,
-            ompl_planning_pipeline_config,
-            trajectory_execution,
-            moveit_controllers,
-            planning_scene_monitor_parameters,
-            joint_limits_yaml,
+            moveit_config.to_dict(),
+            {
+                "moveit_controller_manager": "moveit_simple_controller_manager/MoveItSimpleControllerManager",
+                "moveit_simple_controller_manager": moveit_simple_controller_manager,
+                "planning_scene_monitor_options": {
+                    "name": "planning_scene_monitor",
+                    "robot_description": "robot_description",
+                    "joint_state_topic": "/joint_states",
+                    "attached_collision_object_topic": "/move_group/planning_scene_monitor",
+                    "publish_planning_scene_topic": "/move_group/publish_planning_scene",
+                    "monitored_planning_scene_topic": "/move_group/monitored_planning_scene",
+                    "wait_for_initial_state_timeout": 10.0,
+                },
+            },
         ],
     )
 
-    # RViz
-    rviz_base = os.path.join(
-        get_package_share_directory("aubo_moveit_config"), "config"
-    )
-    rviz_config = os.path.join(rviz_base, "view_robot.rviz")
+    rviz_config = os.path.join(moveit_share, "config", "moveit.rviz")
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
         name="rviz2",
         output="log",
+        condition=IfCondition(launch_rviz),
         arguments=["-d", rviz_config],
         parameters=[
-            robot_description,
-            robot_description_semantic,
-            ompl_planning_pipeline_config,
-            kinematics_yaml,
-            joint_limits_yaml,
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.joint_limits,
+            moveit_config.planning_pipelines,
         ],
     )
 
-    # Static TF
-    static_tf_node = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="static_transform_publisher",
-        output="log",
-        arguments=["0.0", "0.0", "0.0", "0.0", "0.0", "0.0", "world", "base_link"],
-    )
-
-    # Publish TF
-    robot_state_pub_node = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        name="robot_state_publisher",
-        output="both",
-        parameters=[robot_description],
-    )
-    joint_state_publisher_node = Node(
-        package='joint_state_publisher_gui',
-        executable='joint_state_publisher_gui',
-        name='joint_state_publisher_gui',
-        parameters=[robot_description]
-        )
-
-    nodes_to_start = [move_group_node, rviz_node, static_tf_node, robot_state_pub_node]
-    return nodes_to_start
+    return [move_group_node, rviz_node]
 
 
 def generate_launch_description():
-
-    declared_arguments = []
-
-    # TODO(andyz): add other options
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "robot_xacro_file",
-            default_value="aubo_ros2.xacro",
-            description="Xacro describing the robot.",
-            choices=["aubo_ros2.xacro"],
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "support_package",
-            default_value="aubo_description",
-            description="Name of the support package",
-            choices=["aubo_description"],
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "moveit_config_package",
-            default_value="aubo_moveit_config",
-            description="Name of the support package",
-            choices=["aubo_moveit_config"],
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "moveit_config_file",
-            description="Name of the SRDF file",
-            default_value="aubo_robot.srdf",
-            choices=["aubo_robot.srdf"],
-        )
-    )
-
     return LaunchDescription(
-        declared_arguments + [OpaqueFunction(function=launch_setup)]
+        [
+            DeclareLaunchArgument(
+                "description_package",
+                default_value="aubo_description",
+                description="Package that provides the robot xacro.",
+            ),
+            DeclareLaunchArgument(
+                "moveit_config_package",
+                default_value="aubo_moveit_config",
+                description="Package that provides MoveIt config files.",
+            ),
+            DeclareLaunchArgument(
+                "description_file",
+                default_value="aubo_ros2.xacro",
+                description="Robot description xacro file name.",
+            ),
+            DeclareLaunchArgument(
+                "aubo_type",
+                default_value="aubo_i5",
+                description="Robot model to pass into the description xacro.",
+            ),
+            DeclareLaunchArgument(
+                "moveit_config_file",
+                default_value="",
+                description="Optional SRDF path relative to the MoveIt config package. Empty uses the generic aubo_robot.srdf.",
+            ),
+            DeclareLaunchArgument(
+                "launch_rviz",
+                default_value="true",
+                description="Launch RViz together with move_group.",
+            ),
+            OpaqueFunction(function=launch_setup),
+        ]
     )

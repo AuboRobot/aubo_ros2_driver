@@ -1,56 +1,84 @@
 #include "aubo_hardware_interface.h"
+
+#include <chrono>
+#include <exception>
+#include <thread>
+
 #include <pluginlib/class_list_macros.hpp>
 #include "rclcpp/rclcpp.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
-#include <ctime>
+
 namespace aubo_driver {
 
 AuboHardwareInterface::~AuboHardwareInterface()
 {
-    stopServoMode();
+    disconnectClients();
 }
+
 bool AuboHardwareInterface::OnActive()
 {
-    const std::string robot_ip_ = info_.hardware_parameters["robot_ip"];
-    rpc_client_ = std::make_shared<RpcClient>();
+    const auto logger = rclcpp::get_logger("AuboHardwareInterface");
 
-    rpc_client_->setRequestTimeout(1000);
-    // 接口调用: 连接到 RPC 服务
-    rpc_client_->connect(robot_ip_, 30004);
-    // 接口调用: 登录
-    rpc_client_->login("aubo", "123456");
-
-    rtde_client_ = std::make_shared<RtdeClient>();
-    // 接口调用: 连接到 RTDE 服务
-    rtde_client_->connect(robot_ip_, 30010);
-    // 接口调用: 登录
-    rtde_client_->login("aubo", "123456");
-    int topic = rtde_client_->setTopic(false, { "R1_message" }, 200, 0);
-    if (topic < 0) {
-        std::cout << "Set topic fail!" << std::endl;
+    if (info_.hardware_parameters.find("robot_ip") ==
+        info_.hardware_parameters.end()) {
+        RCLCPP_ERROR(logger, "Missing required hardware parameter 'robot_ip'");
+        return false;
     }
-    rtde_client_->subscribe(topic, [](InputParser &parser) {
-        arcs::common_interface::RobotMsgVector msgs;
-        msgs = parser.popRobotMsgVector();
-        for (size_t i = 0; i < msgs.size(); i++) {
-            auto &msg = msgs[i];
+
+    robot_ip_ = info_.hardware_parameters["robot_ip"];
+
+    try {
+        rpc_client_ = std::make_shared<RpcClient>();
+
+        rpc_client_->setRequestTimeout(1000);
+        rpc_client_->connect(robot_ip_, 30004);
+        rpc_client_->login("aubo", "123456");
+
+        rtde_client_ = std::make_shared<RtdeClient>();
+        rtde_client_->connect(robot_ip_, 30010);
+        rtde_client_->login("aubo", "123456");
+        const int topic = rtde_client_->setTopic(false, { "R1_message" }, 200, 0);
+        if (topic < 0) {
+            RCLCPP_ERROR(logger, "Failed to create RTDE message topic");
+            disconnectClients();
+            return false;
         }
-    });
-    robot_name_ = rpc_client_->getRobotNames().front();
+        rtde_client_->subscribe(topic, [](InputParser &parser) {
+            arcs::common_interface::RobotMsgVector msgs;
+            msgs = parser.popRobotMsgVector();
+            for (size_t i = 0; i < msgs.size(); ++i) {
+                auto &msg = msgs[i];
+                (void)msg;
+            }
+        });
 
-    rpc_client_->getRobotInterface(robot_name_)
-    ->getRobotConfig()
-    ->setHardwareCustomParameters("[joint_func] \n vff_enable = false\n");
+        const auto robot_names = rpc_client_->getRobotNames();
+        if (robot_names.empty()) {
+            RCLCPP_ERROR(logger, "No robot name returned from controller");
+            disconnectClients();
+            return false;
+        }
+        robot_name_ = robot_names.front();
 
-    std::cout << "vff_enable = false" << std::endl;
+        rpc_client_->getRobotInterface(robot_name_)
+            ->getRobotConfig()
+            ->setHardwareCustomParameters("[joint_func] \n vff_enable = false\n");
 
-    // 设置rtde输入
-    setInput(rtde_client_);
+        RCLCPP_INFO(logger, "Configured hardware parameter vff_enable=false");
 
-    // 配置输出
-    configSubscribe(rtde_client_);
+        setInput(rtde_client_);
+        configSubscribe(rtde_client_);
 
-    startServoMode();
+        if (startServoMode() != 0) {
+            RCLCPP_ERROR(logger, "Failed to enter servo mode");
+            disconnectClients();
+            return false;
+        }
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(logger, "Hardware activation failed: %s", e.what());
+        disconnectClients();
+        return false;
+    }
 
     return true;
 }
@@ -65,14 +93,16 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
 
     info_ = system_info;
     initialized_ = false;
+    aubo_position_commands_.fill(0.0);
+    aubo_velocity_commands_.fill(0.0);
+    actual_q_copy_.fill(0.0);
+    joint_velocity_copy_.fill(0.0);
 
     for (const hardware_interface::ComponentInfo &joint : info_.joints) {
-        // RRBotSystemPositionOnly has exactly one state and command interface
-        // on each joint
         if (joint.command_interfaces.size() != 2) {
             RCLCPP_FATAL(
-                rclcpp::get_logger("RRBotSystemPositionOnlyHardware"),
-                "Joint '%s' has %zu command interfaces found. 1 expected.",
+                rclcpp::get_logger("AuboHardwareInterface"),
+                "Joint '%s' has %zu command interfaces found. 2 expected.",
                 joint.name.c_str(), joint.command_interfaces.size());
             return hardware_interface::CallbackReturn::ERROR;
         }
@@ -80,39 +110,63 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
         if (joint.command_interfaces[0].name !=
             hardware_interface::HW_IF_POSITION) {
             RCLCPP_FATAL(
-                rclcpp::get_logger("RRBotSystemPositionOnlyHardware"),
+                rclcpp::get_logger("AuboHardwareInterface"),
                 "Joint '%s' have %s command interfaces found. '%s' expected.",
                 joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
                 hardware_interface::HW_IF_POSITION);
             return hardware_interface::CallbackReturn::ERROR;
         }
 
+        if (joint.command_interfaces[1].name !=
+            hardware_interface::HW_IF_VELOCITY) {
+            RCLCPP_FATAL(
+                rclcpp::get_logger("AuboHardwareInterface"),
+                "Joint '%s' has second command interface '%s'. '%s' expected.",
+                joint.name.c_str(), joint.command_interfaces[1].name.c_str(),
+                hardware_interface::HW_IF_VELOCITY);
+            return hardware_interface::CallbackReturn::ERROR;
+        }
+
         if (joint.state_interfaces.size() != 2) {
-            RCLCPP_FATAL(rclcpp::get_logger("RRBotSystemPositionOnlyHardware"),
-                         "Joint '%s' has %zu state interface. 1 expected.",
+            RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+                         "Joint '%s' has %zu state interfaces. 2 expected.",
                          joint.name.c_str(), joint.state_interfaces.size());
             return hardware_interface::CallbackReturn::ERROR;
         }
 
         if (joint.state_interfaces[0].name !=
             hardware_interface::HW_IF_POSITION) {
-            RCLCPP_FATAL(rclcpp::get_logger("RRBotSystemPositionOnlyHardware"),
+            RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
                          "Joint '%s' have %s state interface. '%s' expected.",
                          joint.name.c_str(),
                          joint.state_interfaces[0].name.c_str(),
                          hardware_interface::HW_IF_POSITION);
             return hardware_interface::CallbackReturn::ERROR;
         }
+
+        if (joint.state_interfaces[1].name !=
+            hardware_interface::HW_IF_VELOCITY) {
+            RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+                         "Joint '%s' has second state interface '%s'. '%s' expected.",
+                         joint.name.c_str(),
+                         joint.state_interfaces[1].name.c_str(),
+                         hardware_interface::HW_IF_VELOCITY);
+            return hardware_interface::CallbackReturn::ERROR;
+        }
     }
 
     return hardware_interface::CallbackReturn::SUCCESS;
 }
+
 hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
     const rclcpp_lifecycle::State &previous_state)
 {
+    (void)previous_state;
     RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
                 "Starting ...please wait...");
-    OnActive();
+    if (!OnActive()) {
+        return hardware_interface::CallbackReturn::ERROR;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     readActualQ();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -122,6 +176,42 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
         aubo_position_commands_ = actual_q_copy_;
         initialized_ = true;
     }
+    return hardware_interface::CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_deactivate(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    disconnectClients();
+    initialized_ = false;
+    return hardware_interface::CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_cleanup(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    disconnectClients();
+    initialized_ = false;
+    return hardware_interface::CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_shutdown(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    disconnectClients();
+    initialized_ = false;
+    return hardware_interface::CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_error(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    disconnectClients();
+    initialized_ = false;
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -159,6 +249,8 @@ AuboHardwareInterface::export_command_interfaces()
 hardware_interface::return_type AuboHardwareInterface::read(
     const rclcpp::Time &time, const rclcpp::Duration &period)
 {
+    (void)time;
+    (void)period;
     readActualQ();
     if (!initialized_) {
         //获取初始状态
@@ -171,13 +263,19 @@ hardware_interface::return_type AuboHardwareInterface::read(
 hardware_interface::return_type AuboHardwareInterface::write(
     const rclcpp::Time &time, const rclcpp::Duration &period)
 {
-    if (robot_mode_ == RobotModeType::Running && (safety_mode_ == 
-        SafetyModeType::Normal || safety_mode_ == SafetyModeType::ReducedMode)) {
+    (void)time;
+    (void)period;
+    if (robot_mode_ == RobotModeType::Running &&
+        (safety_mode_ == SafetyModeType::Normal ||
+         safety_mode_ == SafetyModeType::ReducedMode)) {
         try {
             Servoj(aubo_position_commands_);
         } catch (const std::exception &e) {
+            RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                         "Servoj failed: %s", e.what());
+            return hardware_interface::return_type::ERROR;
         }
-    }else{
+    } else {
         // 机器人状态异常
         RCLCPP_WARN_STREAM(
             rclcpp::get_logger("AuboHardwareInterface"),
@@ -221,13 +319,20 @@ bool AuboHardwareInterface::isServoModeStart()
 {
     return servo_mode_start_;
 }
+
 int AuboHardwareInterface::startServoMode()
 {
+    if (!rpc_client_) {
+        return -1;
+    }
     if (servo_mode_start_) {
         return 0;
     }
-    // 接口调用 : 获取机器人的名字
-    auto robot_name = rpc_client_->getRobotNames().front();
+    const auto robot_names = rpc_client_->getRobotNames();
+    if (robot_names.empty()) {
+        return -1;
+    }
+    auto robot_name = robot_names.front();
 
     //开启servo模式
     rpc_client_->getRobotInterface(robot_name)
@@ -253,11 +358,19 @@ int AuboHardwareInterface::startServoMode()
 
 int AuboHardwareInterface::stopServoMode()
 {
+    if (!rpc_client_) {
+        servo_mode_start_ = false;
+        return 0;
+    }
     if (!servo_mode_start_) {
         return 0;
     }
-    // 接口调用 : 获取机器人的名字
-    auto robot_name = rpc_client_->getRobotNames().front();
+    const auto robot_names = rpc_client_->getRobotNames();
+    if (robot_names.empty()) {
+        servo_mode_start_ = false;
+        return 0;
+    }
+    auto robot_name = robot_names.front();
 
     while (!rpc_client_->getRobotInterface(robot_name)
                 ->getRobotState()
@@ -290,8 +403,14 @@ int AuboHardwareInterface::stopServoMode()
 int AuboHardwareInterface::Servoj(
     const std::array<double, 6> joint_position_command)
 {
-    // 接口调用 : 获取机器人的名字
-    auto robot_name = rpc_client_->getRobotNames().front();
+    if (!rpc_client_) {
+        return -1;
+    }
+    const auto robot_names = rpc_client_->getRobotNames();
+    if (robot_names.empty()) {
+        return -1;
+    }
+    auto robot_name = robot_names.front();
 
     std::vector<double> traj(6, 0);
     for (size_t i = 0; i < traj.size(); i++) {
@@ -360,6 +479,26 @@ void AuboHardwareInterface::configSubscribe(RtdeClientPtr cli)
         line_ = parser.popInt32();
         actual_TCP_pose_ = parser.popVectorDouble();
     });
+}
+
+void AuboHardwareInterface::disconnectClients()
+{
+    try {
+        stopServoMode();
+    } catch (...) {
+    }
+
+    try {
+        if (rpc_client_) {
+            rpc_client_->logout();
+        }
+    } catch (...) {
+    }
+
+    rpc_client_.reset();
+    rtde_client_.reset();
+    robot_name_.clear();
+    servo_mode_start_ = false;
 }
 } // namespace aubo_driver
 

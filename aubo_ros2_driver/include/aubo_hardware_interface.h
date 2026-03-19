@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 #include <limits>
+#include <array>
+#include <atomic>
+#include <mutex>
 
 #include <algorithm>
 #include <utility>
@@ -14,7 +17,6 @@
 #include "hardware_interface/hardware_info.hpp"
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_return_values.hpp"
-#include "hardware_interface/visibility_control.h"
 
 // ROS
 #include "rclcpp/macros.hpp"
@@ -46,6 +48,14 @@ public:
     bool OnActive();
     hardware_interface::CallbackReturn on_activate(
         const rclcpp_lifecycle::State &previous_state);
+    hardware_interface::CallbackReturn on_deactivate(
+        const rclcpp_lifecycle::State &previous_state);
+    hardware_interface::CallbackReturn on_cleanup(
+        const rclcpp_lifecycle::State &previous_state);
+    hardware_interface::CallbackReturn on_shutdown(
+        const rclcpp_lifecycle::State &previous_state);
+    hardware_interface::CallbackReturn on_error(
+        const rclcpp_lifecycle::State &previous_state);
     hardware_interface::CallbackReturn on_init(
         const hardware_interface::HardwareInfo &system_info) final;
     std::vector<hardware_interface::StateInterface> export_state_interfaces()
@@ -65,8 +75,6 @@ public:
 
     bool isServoModeStart();
 
-    bool ServoModeStart();
-
     int startServoMode();
 
     int stopServoMode();
@@ -76,6 +84,8 @@ public:
     void configSubscribe(RtdeClientPtr cli);
 
 private:
+    void disconnectClients();
+
     std::shared_ptr<RpcClient> rpc_client_{ nullptr };
     std::shared_ptr<RtdeClient> rtde_client_{ nullptr };
     std::vector<std::string> joint_names_;
@@ -83,12 +93,12 @@ private:
     std::string robot_ip_;
     std::string robot_name_;
 
-    std::array<double, 6> aubo_position_commands_;
-    std::array<double, 6> aubo_velocity_commands_;
-    double speed_scaling_combined_;
-    bool controllers_initialized_;
+    std::array<double, 6> aubo_position_commands_{};
+    std::array<double, 6> aubo_velocity_commands_{};
+    double speed_scaling_combined_{ 1.0 };
+    bool controllers_initialized_{ false };
     bool servo_mode_start_{ false };
-    bool initialized_;
+    bool initialized_{ false };
 
     std::atomic<bool> robot_program_running_;
     std::atomic<bool> controller_reset_necessary_{ false };
@@ -104,8 +114,8 @@ private:
     int line_{ -1 };
     std::vector<double> actual_q_{ std::vector<double>(6, 0) };
     std::vector<double> joint_velocity_{ std::vector<double>(6, 0) };
-    std::array<double, 6> actual_q_copy_;
-    std::array<double, 6> joint_velocity_copy_;
+    std::array<double, 6> actual_q_copy_{};
+    std::array<double, 6> joint_velocity_copy_{};
     std::vector<double> actual_qd_{ std::vector<double>(6, 0) };
     std::vector<double> target_q_{ std::vector<double>(6, 0) };
     std::vector<double> target_qd_{ std::vector<double>(6, 0) };
