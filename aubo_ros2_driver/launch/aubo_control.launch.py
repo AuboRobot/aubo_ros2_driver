@@ -99,6 +99,20 @@ def generate_launch_description():
     )
     declared_arguments.append(
         DeclareLaunchArgument(
+            "dashboard_port",
+            default_value="9012",
+            description="AUBO dashboard JSON-RPC WebSocket port.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "dashboard_robot",
+            default_value="rob1",
+            description="Robot prefix used by AUBO dashboard JSON-RPC methods.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
             "fake_sensor_commands",
             default_value="false",
             description="Enable fake command interfaces for sensors used for simple simulations. \
@@ -129,6 +143,8 @@ def generate_launch_description():
     fake_sensor_commands = LaunchConfiguration("fake_sensor_commands")
     robot_ip = LaunchConfiguration("robot_ip")
     servo_mode = LaunchConfiguration("servo_mode")
+    dashboard_port = LaunchConfiguration("dashboard_port")
+    dashboard_robot = LaunchConfiguration("dashboard_robot")
     aubo_type = LaunchConfiguration("aubo_type")
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
@@ -233,6 +249,21 @@ def generate_launch_description():
         output="both",
     )
 
+    dashboard_client_node = Node(
+        package="aubo_ros2_driver",
+        executable="dashboard_client",
+        name="dashboard_client",
+        condition=UnlessCondition(use_fake_hardware),
+        output="both",
+        parameters=[
+            {
+                "robot_ip": robot_ip,
+                "port": dashboard_port,
+                "robot": dashboard_robot,
+            }
+        ],
+    )
+
     initial_joint_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -247,6 +278,7 @@ def generate_launch_description():
         io_and_status_controller_spawner,
         freedrive_mode_controller_spawner,
         controller_stopper_node,
+        dashboard_client_node,
         initial_joint_controller_spawner,
     ]
 

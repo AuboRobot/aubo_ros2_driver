@@ -755,6 +755,54 @@ hardware_interface::return_type AuboHardwareInterface::write(
         velocity_controller_running_.load();
     const bool position_controller_running =
         position_controller_running_.load();
+    const bool motion_controller_running =
+        velocity_controller_running || position_controller_running;
+
+    if (robot_mode_ != RobotModeType::Running ||
+        (safety_mode_ != SafetyModeType::Normal &&
+         safety_mode_ != SafetyModeType::ReducedMode)) {
+        if (servo_mode_start_) {
+            RCLCPP_INFO(
+                rclcpp::get_logger("AuboHardwareInterface"),
+                "Robot left motion-ready state. Local servo mode state is "
+                "invalidated.");
+        }
+        servo_mode_start_ = false;
+
+        if (motion_controller_running && !motion_command_paused_) {
+            RCLCPP_WARN_STREAM(
+                rclcpp::get_logger("AuboHardwareInterface"),
+                "Motion command paused until robot is running and safety "
+                "state is normal or reduced. robot_mode_: "
+                    << static_cast<int>(robot_mode_)
+                    << ", safety_mode_: " << static_cast<int>(safety_mode_));
+            motion_command_paused_ = true;
+        }
+
+        return hardware_interface::return_type::OK;
+    }
+
+    if (motion_command_paused_ && motion_controller_running) {
+        if (position_controller_running) {
+            std::unique_lock<std::mutex> lck(rtde_mtx_);
+            const std::size_t count =
+                std::min(actual_q_.size(), aubo_position_commands_.size());
+            for (std::size_t i = 0; i < count; ++i) {
+                aubo_position_commands_[i] = actual_q_[i];
+            }
+        }
+        if (velocity_controller_running) {
+            std::fill(aubo_velocity_commands_.begin(),
+                      aubo_velocity_commands_.end(), 0.0);
+        }
+        servo_mode_start_ = false;
+        RCLCPP_INFO(
+            rclcpp::get_logger("AuboHardwareInterface"),
+            "Robot returned to motion-ready state. Servo mode will be "
+            "entered again on the next motion command.");
+    }
+    motion_command_paused_ = false;
+
     if (!velocity_controller_running && !position_controller_running) {
         if (stopServoMode() != 0) {
             return hardware_interface::return_type::ERROR;
@@ -762,25 +810,16 @@ hardware_interface::return_type AuboHardwareInterface::write(
         return hardware_interface::return_type::OK;
     }
 
-    if (robot_mode_ == RobotModeType::Running && (safety_mode_ == 
-        SafetyModeType::Normal || safety_mode_ == SafetyModeType::ReducedMode)) {
-        try {
-            if (velocity_controller_running) {
-                speedServo(aubo_velocity_commands_);
-            } else if (position_controller_running) {
-                Servoj(aubo_position_commands_);
-            }
-        } catch (const std::exception &e) {
+    try {
+        if (velocity_controller_running) {
+            speedServo(aubo_velocity_commands_);
+        } else if (position_controller_running) {
+            Servoj(aubo_position_commands_);
         }
-    }else{
-        // 机器人状态异常
-        RCLCPP_WARN_STREAM(
-            rclcpp::get_logger("AuboHardwareInterface"),
-            "Robot not in valid state for motion command. Plz check&fix robot status firstly then restart driver"
-            << "robot_mode_: " << static_cast<int>(robot_mode_)
-            << ", safety_mode_: " << static_cast<int>(safety_mode_));
-
-        return hardware_interface::return_type::ERROR;
+    } catch (const std::exception &e) {
+        servo_mode_start_ = false;
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                     "Motion command failed: %s", e.what());
     }
 
     return hardware_interface::return_type::OK;
@@ -849,25 +888,36 @@ int AuboHardwareInterface::startServoMode()
         return -1;
     }
 
-    auto motion_control =
-        rpc_client_->getRobotInterface(robot_name_)->getMotionControl();
-    if (servo_mode_start_ &&
-        motion_control->getServoModeSelect() == servo_mode_) {
-        return 0;
+    try {
+        auto motion_control =
+            rpc_client_->getRobotInterface(robot_name_)->getMotionControl();
+        if (servo_mode_start_ &&
+            motion_control->getServoModeSelect() == servo_mode_) {
+            return 0;
+        }
+
+        //开启servo模式
+        motion_control->setServoModeSelect(servo_mode_);
+        int i = 0;
+        while (motion_control->getServoModeSelect() != servo_mode_) {
+            if (i++ > 5) {
+                RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                             "Servo mode enable failed. Current servo mode is "
+                             "%d.",
+                             motion_control->getServoModeSelect());
+                servo_mode_start_ = false;
+                return -1;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    } catch (const std::exception &e) {
+        servo_mode_start_ = false;
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                     "Failed to enable servo mode select %d: %s", servo_mode_,
+                     e.what());
+        return -1;
     }
 
-    //开启servo模式
-    motion_control->setServoModeSelect(servo_mode_);
-    int i = 0;
-    while (motion_control->getServoModeSelect() != servo_mode_) {
-        if (i++ > 5) {
-            std::cout << "Servo Mode enable fail! Servo Mode is "
-                      << motion_control->getServoModeSelect()
-                      << std::endl;
-            return -1;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
     servo_mode_start_ = true;
     RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
                 "Servo mode select %d enabled.", servo_mode_);

@@ -6,6 +6,10 @@
 /build
 /install
 /log
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
 
 # Python cache artifacts
 __pycache__/

@@ -76,7 +76,7 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:
 
 ### IO、配置与拖动示教
 
-真实硬件启动时，`aubo_control.launch.py` 会自动启动 `aubo_controllers` 包中的 `io_and_status_controller`、`freedrive_mode_controller`，以及驱动包中的 `controller_stopper`。其中 `io_and_status_controller` 从 ros2_control state interfaces 读取状态并发布 ROS 话题，发布数组长度由 `AuboHardwareInterface` 实际导出的接口数量决定；IO 写服务使用固定 command payload 接口，默认启用，`pin` 参数直接透传给 SDK。`freedrive_mode_controller` 通过 command interfaces 写入拖动示教命令：
+真实硬件启动时，`aubo_control.launch.py` 会自动启动 `aubo_controllers` 包中的 `io_and_status_controller`、`freedrive_mode_controller`，以及驱动包中的 `controller_stopper` 和 `dashboard_client`。其中 `io_and_status_controller` 从 ros2_control state interfaces 读取状态并发布 ROS 话题，发布数组长度由 `AuboHardwareInterface` 实际导出的接口数量决定；IO 写服务使用固定 command payload 接口，默认启用，`pin` 参数直接透传给 SDK。`freedrive_mode_controller` 通过 command interfaces 写入拖动示教命令：
 
 - `/io_control/state`：发布 `aubo_msgs/msg/IoControlState`，包含标准 IO、可配置 IO、末端 IO、末端电压和末端配置状态。
 - `/robot_manage/state`：发布 `aubo_msgs/msg/RobotManageState`，包含拖动示教状态、free axes 和 feature。
@@ -84,11 +84,12 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:
 - `/io_control/*`：提供 IO 写入和末端 IO 配置服务，默认启用；无效 `pin` 会由 SDK 返回错误码，驱动在日志中打印。
 - `/robot_config/*`：提供 payload、TCP offset 等配置服务，默认启用。
 - `/robot_manage/set_handguide`：提供拖动示教服务。
+- `/robot_manage/poweron`、`/robot_manage/startup`、`/robot_manage/poweroff` 等：由 `dashboard_client` 通过 9012 WebSocket JSON-RPC 提供机器人生命周期服务。
 - `/freedrive_mode_controller/enable_freedrive_mode`：提供拖动示教 Bool 话题入口。
 
 `/io_control/state`、`/robot_manage/state` 和 `/robot_config/state` 跟随 `controller_manager.update_rate` 发布，不再额外设置 IO 状态发布限速。
 
-底层 SDK 与 RTDE 连接统一收敛在 `aubo_ros2_driver` 包的 `AuboHardwareInterface`。`aubo_controllers` 只提供 ros2_control controller 插件，不连接 SDK，也不订阅 RTDE。`controller_stopper` 只根据 `/robot_manage/state` 编排运动控制器启停。
+实时控制、RTDE 状态、IO、Payload、TCP offset 与拖动示教仍收敛在 `AuboHardwareInterface` 和 ros2_control controllers。机器人上电、启动、断电、松刹车、解除保护停等生命周期能力由 `dashboard_client` 通过 9012 WebSocket JSON-RPC 提供；这些操作可能改变机器人运行状态，驱动会在机器人不可运动时暂停运动输出并失效本地伺服模式状态，恢复到可运动状态后会重新进入所选 `servo_mode`。`aubo_controllers` 不连接 SDK，也不订阅 RTDE。`controller_stopper` 只根据 `/robot_manage/state` 编排运动控制器启停。
 
 查看当前 IO 状态：
 
@@ -176,6 +177,26 @@ ros2 service call /robot_config/set_tcp_offset aubo_msgs/srv/SetTcpOffset \
 
 ros2_control 的 `io_control/get_*`、`io_control/set_*`、`robot_config/*` 和 `robot_manage/*` interface 仍会导出，主要用于控制器集成和底层调试。读状态接口按实际硬件数量导出；写命令接口是固定 payload 语义，例如数字输出使用 `set_digital_output_type`、`set_digital_output_pin`、`set_digital_output_value` 和 `set_digital_output_trigger`，不按 pin 数量导出 command interfaces。
 
+机器人生命周期服务：
+
+```bash
+# 上电
+ros2 service call /robot_manage/poweron std_srvs/srv/Trigger {}
+
+# 启动
+ros2 service call /robot_manage/startup std_srvs/srv/Trigger {}
+
+# 断电
+ros2 service call /robot_manage/poweroff std_srvs/srv/Trigger {}
+
+# 松开/锁定刹车
+ros2 service call /robot_manage/release_robot_brake std_srvs/srv/Trigger {}
+ros2 service call /robot_manage/lock_robot_brake std_srvs/srv/Trigger {}
+
+# 解除保护停
+ros2 service call /robot_manage/unlock_protective_stop std_srvs/srv/Trigger {}
+```
+
 ## 驱动真实机械臂 aubo_i5 单点轨迹执行 demo（修改机器人对应 `robot_ip`、`aubo_type`）
 
 ```bash
@@ -185,16 +206,16 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:
 ros2 launch ros_joints_plan joints_plan.launch.py aubo_type:=aubo_i5
 ```
 
-## JSON-RPC 调试服务（修改机器人对应 `robot_ip`）
+## Dashboard Client 与 JSON-RPC 调试服务（修改机器人对应 `robot_ip`）
 
-`/jsonrpc_service` 是面向调试和高级排查的 JSON-RPC 透传入口，默认连接机器人
-WebSocket 端口 `9012`。常规 IO、拖动示教、Payload、TCP offset 等用户能力优先使用
-上面的 ROS topic/service；这些能力会通过 ros2_control controller 与驱动协同，避免绕过
-运动控制链路。
+`dashboard_client` 默认连接机器人 WebSocket 端口 `9012`，提供 `/robot_manage/*`
+生命周期服务，同时保留 `/jsonrpc_service` 作为调试和高级排查的 JSON-RPC 透传入口。
+常规 IO、拖动示教、Payload、TCP offset 等用户能力优先使用上面的 ROS topic/service；
+这些能力会通过 ros2_control controller 与驱动协同，避免绕过运动控制链路。
 
 ```bash
 source install/setup.bash
-ros2 launch aubo_ros2_driver aubo_client.launch.py robot_ip:=127.0.0.1 port:=9012 log_level:=info
+ros2 launch aubo_ros2_driver dashboard_client.launch.py robot_ip:=127.0.0.1 port:=9012 log_level:=info
 ```
 
 ## 独立 Topic 命令节点

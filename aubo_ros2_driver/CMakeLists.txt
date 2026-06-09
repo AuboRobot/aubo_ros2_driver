@@ -53,7 +53,8 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(aubo_dashboard_msgs REQUIRED)
 find_package(aubo_msgs REQUIRED)
 
-find_package(Boost REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system)
+find_package(nlohmann_json REQUIRED)
 find_package(Threads REQUIRED)
 set(THIS_PACKAGE_INCLUDE_DEPENDS
   controller_manager
@@ -84,7 +85,6 @@ include_directories(
 )
 
 install(PROGRAMS
-  scripts/aubo_client_node.py
   scripts/test_aubo_jsonrpc.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -117,6 +117,7 @@ ament_target_dependencies(aubo_command_node
   aubo_msgs
   geometry_msgs
   rclcpp
+)
 add_executable(robot_state_helper
   src/robot_state_helper.cpp
   src/robot_state_helper_node.cpp
@@ -139,9 +140,21 @@ target_include_directories(
   include
 )
 
+add_executable(dashboard_client
+  src/dashboard_client_ros.cpp
+  src/dashboard_client_node.cpp
+)
+ament_target_dependencies(dashboard_client ${THIS_PACKAGE_INCLUDE_DEPENDS})
+target_link_libraries(dashboard_client Boost::system nlohmann_json::nlohmann_json)
+target_include_directories(
+  dashboard_client
+  PRIVATE
+  include
+)
+
 pluginlib_export_plugin_description_file(hardware_interface hardware_interface_plugin.xml)
 install(
-  TARGETS aubo_ros2_control_node aubo_command_node robot_state_helper controller_stopper
+  TARGETS aubo_ros2_control_node aubo_command_node robot_state_helper controller_stopper dashboard_client
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

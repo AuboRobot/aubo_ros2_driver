@@ -115,6 +115,7 @@ private:
     bool servo_mode_start_{ false };
     int servo_mode_{ 1 };
     bool initialized_;
+    bool motion_command_paused_{ false };
 
     std::atomic<bool> robot_program_running_;
     std::atomic<bool> controller_reset_necessary_{ false };
