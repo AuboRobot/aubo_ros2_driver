@@ -88,6 +88,7 @@ private:
     double speed_scaling_combined_;
     bool controllers_initialized_;
     bool servo_mode_start_{ false };
+    int servo_mode_{ 1 };
     bool initialized_;
 
     std::atomic<bool> robot_program_running_;

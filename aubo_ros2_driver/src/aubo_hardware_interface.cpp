@@ -66,6 +66,20 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
     info_ = system_info;
     initialized_ = false;
 
+    auto servo_mode_param = info_.hardware_parameters.find("servo_mode");
+    if (servo_mode_param != info_.hardware_parameters.end() &&
+        !servo_mode_param->second.empty()) {
+        try {
+            servo_mode_ = std::stoi(servo_mode_param->second);
+        } catch (const std::exception &e) {
+            RCLCPP_FATAL(
+                rclcpp::get_logger("AuboHardwareInterface"),
+                "Invalid servo_mode parameter '%s': %s",
+                servo_mode_param->second.c_str(), e.what());
+            return hardware_interface::CallbackReturn::ERROR;
+        }
+    }
+
     for (const hardware_interface::ComponentInfo &joint : info_.joints) {
         // RRBotSystemPositionOnly has exactly one state and command interface
         // on each joint
@@ -232,16 +246,16 @@ int AuboHardwareInterface::startServoMode()
     //开启servo模式
     rpc_client_->getRobotInterface(robot_name)
         ->getMotionControl()
-        ->setServoMode(true);
+        ->setServoModeSelect(servo_mode_);
     int i = 0;
-    while (!rpc_client_->getRobotInterface(robot_name)
-                ->getMotionControl()
-                ->isServoModeEnabled()) {
+    while (rpc_client_->getRobotInterface(robot_name)
+               ->getMotionControl()
+               ->getServoModeSelect() != servo_mode_) {
         if (i++ > 5) {
             std::cout << "Servo Mode enable fail! Servo Mode is "
                       << rpc_client_->getRobotInterface(robot_name)
                              ->getMotionControl()
-                             ->isServoModeEnabled()
+                             ->getServoModeSelect()
                       << std::endl;
             return -1;
         }
@@ -268,15 +282,15 @@ int AuboHardwareInterface::stopServoMode()
     int i = 0;
     rpc_client_->getRobotInterface(robot_name)
         ->getMotionControl()
-        ->setServoMode(false);
+        ->setServoModeSelect(0);
     while (rpc_client_->getRobotInterface(robot_name)
                ->getMotionControl()
-               ->isServoModeEnabled()) {
+               ->getServoModeSelect() != 0) {
         if (i++ > 5) {
             std::cout << "Servo Mode disable fail! Servo Mode is "
                       << rpc_client_->getRobotInterface(robot_name)
                              ->getMotionControl()
-                             ->isServoModeEnabled()
+                             ->getServoModeSelect()
                       << std::endl;
             return -1;
         }
@@ -298,13 +312,13 @@ int AuboHardwareInterface::Servoj(
         traj[i] = joint_position_command[i];
     }
     
-    if(!rpc_client_->getRobotInterface(robot_name)
-                ->getMotionControl()
-                ->isServoModeEnabled()){
-                
+    if (rpc_client_->getRobotInterface(robot_name)
+            ->getMotionControl()
+            ->getServoModeSelect() != servo_mode_) {
+
         rpc_client_->getRobotInterface(robot_name)
         ->getMotionControl()
-        ->setServoMode(true);           
+        ->setServoModeSelect(servo_mode_);
     }
     // 接口调用: servoJoint
     while (true) {

@@ -84,6 +84,13 @@ def generate_launch_description():
     )
     declared_arguments.append(
         DeclareLaunchArgument(
+            "servo_mode",
+            default_value="1",
+            description="Servo mode selected by MotionControl.setServoModeSelect.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
             "aubo_port",
             default_value="80",
             description="Port at which RWS can be found. \
@@ -121,6 +128,7 @@ def generate_launch_description():
     use_fake_hardware = LaunchConfiguration("use_fake_hardware")
     fake_sensor_commands = LaunchConfiguration("fake_sensor_commands")
     robot_ip = LaunchConfiguration("robot_ip")
+    servo_mode = LaunchConfiguration("servo_mode")
     aubo_type = LaunchConfiguration("aubo_type")
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
@@ -144,6 +152,9 @@ def generate_launch_description():
             " ",
             "robot_ip:=",
             robot_ip,
+            " ",
+            "servo_mode:=",
+            servo_mode,
             " ",
             "aubo_type:=",
             aubo_type,

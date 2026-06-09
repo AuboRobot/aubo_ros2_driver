@@ -44,6 +44,34 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:
 ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 ```
 
+### 伺服模式参数
+
+驱动启动后会进入 SDK 的伺服运动模式，用于持续接收 ros2_control 下发的关节目标并执行 `servoJoint` 控制。本驱动使用 `MotionControl.setServoModeSelect()` / `getServoModeSelect()` 进入和确认伺服模式，不再使用旧的 `setServoMode(true/false)` 接口。
+
+`aubo_control.launch.py` 支持通过 `servo_mode` 选择进入模式，默认值为 `1`。通常无需显式传入；如果现场需要切换到其它伺服模式，可以在启动驱动时追加参数。
+
+`common_interface` 中定义的取值如下：
+
+| `servo_mode` | 含义 |
+| --- | --- |
+| `0` | 退出伺服模式，驱动停止伺服时固定使用该值 |
+| `1` | 截断式规划伺服模式，默认进入模式 |
+| `2` | 透传模式，直接下发 |
+| `3` | 透传模式，缓存下发 |
+| `4` | 1ms 透传模式，缓存下发 |
+| `5` | 规划伺服模式 |
+| `6` | 截断式规划伺服模式，可以叠加力控 |
+| `7` | 规划伺服模式，可以叠加力控 |
+
+其中模式 `1` 添加路点后会实时调整目标点和规划路线，目标点被更新后不保证经过之前设定的目标点；模式 `5` 会保证经过所有目标点。
+
+```bash
+ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:=192.168.127.128 \
+  use_fake_hardware:=false servo_mode:=2
+```
+
+不同控制器和 SDK 版本对模式支持可能存在差异，实际可用取值请以当前控制器配套 SDK 文档为准。
+
 ## 驱动真实机械臂 aubo_i5 单点轨迹执行 demo（修改机器人对应 `robot_ip`、`aubo_type`）
 
 ```bash
