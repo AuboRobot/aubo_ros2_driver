@@ -8,12 +8,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'robot_ip',
             default_value='127.0.0.1',
-            description='TCP server IP'
+            description='JSON-RPC WebSocket server IP'
         ),
         DeclareLaunchArgument(
             'port',
-            default_value='30004',
-            description='TCP server port'
+            default_value='9012',
+            description='JSON-RPC WebSocket server port'
         ),
         DeclareLaunchArgument(
             'robot', 
@@ -29,9 +29,9 @@ def generate_launch_description():
             name='aubo_client',
             output='screen',
             parameters=[{
-                'tcp_client.ip': LaunchConfiguration('robot_ip'),
-                'tcp_client.port': LaunchConfiguration('port'),
-                'tcp_client.robot_prefix': LaunchConfiguration('robot'),
+                'jsonrpc.ip': LaunchConfiguration('robot_ip'),
+                'jsonrpc.port': LaunchConfiguration('port'),
+                'jsonrpc.robot_prefix': LaunchConfiguration('robot'),
             }],
             arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')]
         )

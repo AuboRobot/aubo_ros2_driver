@@ -2,37 +2,38 @@
 import rclpy
 from rclpy.node import Node
 from aubo_msgs.srv import JsonRpc
-import socket
 import json
+import websocket
 
 
-class TcpClientService(Node):
+class JsonRpcWebSocketService(Node):
     def __init__(self):
         super().__init__('aubo_client')
 
         # Declare and get parameters
-        self.declare_parameter('tcp_client.ip', '127.0.0.1')
-        self.declare_parameter('tcp_client.port', 30004)
-        self.declare_parameter('tcp_client.robot_prefix', 'rob1')
+        self.declare_parameter('jsonrpc.ip', '127.0.0.1')
+        self.declare_parameter('jsonrpc.port', 9012)
+        self.declare_parameter('jsonrpc.robot_prefix', 'rob1')
 
-        self.tcp_ip = self.get_parameter('tcp_client.ip').get_parameter_value().string_value
-        self.tcp_port = self.get_parameter('tcp_client.port').get_parameter_value().integer_value
-        self.robot_prefix = self.get_parameter('tcp_client.robot_prefix').get_parameter_value().string_value
+        self.server_ip = self.get_parameter('jsonrpc.ip').get_parameter_value().string_value
+        self.server_port = self.get_parameter('jsonrpc.port').get_parameter_value().integer_value
+        self.robot_prefix = self.get_parameter('jsonrpc.robot_prefix').get_parameter_value().string_value
+        self.url = f'ws://{self.server_ip}:{self.server_port}'
 
-        self.sock = None
-        comm = self.connect_tcp()
+        self.ws = None
+        comm = self.connect_websocket()
 
         # Create the service
         self.srv = self.create_service(JsonRpc, 'jsonrpc_service', self.handle_service)
 
         if comm:
             self.get_logger().info(
-                f'[AUBO CLIENT] Ready to send JSON-RPC to {self.tcp_ip}:{self.tcp_port} '
+                f'[AUBO CLIENT] Ready to send JSON-RPC to {self.url} '
                 f'robot="{self.robot_prefix}"'
             )
         else:
             self.get_logger().error(
-                f'[AUBO CLIENT] Not Ready to send JSON-RPC to {self.tcp_ip}:{self.tcp_port} '
+                f'[AUBO CLIENT] Not Ready to send JSON-RPC to {self.url} '
                 f'robot="{self.robot_prefix}"'
             )
             quit()
@@ -42,7 +43,17 @@ class TcpClientService(Node):
         func = func.strip()
 
         # List of classes that DO NOT use robot_prefix
-        NO_PREFIX_CLASSES = ["Math", "RuntimeMachine"]
+        NO_PREFIX_CLASSES = [
+            "AuboApi",
+            "Math",
+            "RegisterControl",
+            "RobotInterface",
+            "RuntimeMachine",
+            "Serial",
+            "Socket",
+            "SyncMove",
+            "SystemInfo",
+        ]
 
         if '.' in func:
             # Example: "Math.add" → no prefix
@@ -73,26 +84,25 @@ class TcpClientService(Node):
 
         return f"{self.robot_prefix}.{func}"
 
-    def connect_tcp(self):
-        if self.sock:
-            self.sock.close()
+    def connect_websocket(self):
+        if self.ws:
+            self.ws.close()
         try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.settimeout(5.0)
-            self.sock.connect((self.tcp_ip, self.tcp_port))
-            self.get_logger().info(f'[TCP] Connected to {self.tcp_ip}:{self.tcp_port}')
+            self.ws = websocket.create_connection(self.url, timeout=5.0)
+            self.get_logger().info(f'[WebSocket] Connected to {self.url}')
             return True
         except Exception as e:
-            self.get_logger().error(f'[TCP] Failed to connect: {e}')
-            self.sock = None
+            self.get_logger().error(f'[WebSocket] Failed to connect: {e}')
+            self.ws = None
             return False
 
     def handle_service(self, request, response):
-        if not self.sock:
-            self.get_logger().warn("[TCP] No connection, attempting to reconnect...")
-            self.connect_tcp()
-            if not self.sock:
-                response.jsonrpc_response = "[ERROR] Failed to connect"
+        if not self.ws:
+            self.get_logger().warn("[WebSocket] No connection, attempting to reconnect...")
+            self.connect_websocket()
+            if not self.ws:
+                response.result = ''
+                response.error = "[ERROR] Failed to connect"
                 return response
 
         # Build JSON-RPC request object
@@ -114,12 +124,11 @@ class TcpClientService(Node):
 
         try:
             send_str = json.dumps(msg)
-            self.get_logger().debug(f"[TCP] Sending: {send_str}")
-            self.sock.sendall(send_str.encode('utf-8'))
+            self.get_logger().debug(f"[WebSocket] Sending: {send_str}")
+            self.ws.send(send_str)
 
-            # Receive raw JSON from server
-            data = self.sock.recv(4096).decode('utf-8')
-            self.get_logger().debug(f'[TCP] Received raw: {data}')
+            data = self.ws.recv()
+            self.get_logger().debug(f'[WebSocket] Received raw: {data}')
 
             # Try parsing JSON response
             try:
@@ -143,30 +152,31 @@ class TcpClientService(Node):
                 response.error = 'None'
 
         except Exception as e:
-            self.get_logger().error(f'[TCP] Communication error: {e}')
-            self.sock = None  # Force reconnect next time
+            self.get_logger().error(f'[WebSocket] Communication error: {e}')
+            self.ws = None  # Force reconnect next time
             response.result = ''
             response.error = f'[ERROR] {e}'
 
         return response
     
     def destroy_node(self):
-        if self.sock:
-            self.sock.close()
-            self.get_logger().info("[TCP] Connection closed.")
+        if self.ws:
+            self.ws.close()
+            self.get_logger().info("[WebSocket] Connection closed.")
         super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = TcpClientService()
+    node = JsonRpcWebSocketService()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info('Shutting down AUBO TCP Client Node.')
+        node.get_logger().info('Shutting down AUBO JSON-RPC WebSocket Client Node.')
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

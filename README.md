@@ -81,7 +81,12 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:
 ros2 launch ros_joints_plan joints_plan.launch.py aubo_type:=aubo_i5
 ```
 
-## 服务节点驱动真实机械臂（修改机器人对应 `robot_ip`）
+## JSON-RPC 调试服务（修改机器人对应 `robot_ip`）
+
+`/jsonrpc_service` 是面向调试和高级排查的 JSON-RPC 透传入口，默认连接机器人
+WebSocket 端口 `9012`。常规 IO、拖动示教、Payload、TCP offset 等用户能力优先使用
+上面的 ROS topic/service；这些能力会通过 ros2_control controller 与驱动协同，避免绕过
+运动控制链路。
 
 ```bash
 source install/setup.bash
