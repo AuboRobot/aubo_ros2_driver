@@ -40,6 +40,7 @@
   <depend>tf2_geometry_msgs</depend>
   
   <depend>aubo_dashboard_msgs</depend>
+  <depend>aubo_controllers</depend>
   <depend>aubo_description</depend>
   <depend>aubo_msgs</depend>
 

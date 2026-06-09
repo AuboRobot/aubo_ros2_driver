@@ -1,0 +1,7 @@
+# Leave free_axes or feature empty to keep the driver's current values.
+bool enable
+int32[] free_axes
+float64[] feature
+---
+bool success
+string message

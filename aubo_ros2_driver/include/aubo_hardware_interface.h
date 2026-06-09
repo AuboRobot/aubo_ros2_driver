@@ -2,8 +2,14 @@
 #define AUBO_HARDWARE_INTERFACE_H
 
 // System
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <cstddef>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <limits>
 
@@ -29,7 +35,6 @@
 #include "aubo_sdk/rtde.h"
 #include "aubo_sdk/rpc.h"
 #include "serviceinterface.h"
-#include "thread"
 
 using namespace arcs::common_interface;
 using namespace arcs::aubo_sdk;
@@ -54,6 +59,14 @@ public:
     std::vector<hardware_interface::CommandInterface>
     export_command_interfaces() final;
 
+    hardware_interface::return_type prepare_command_mode_switch(
+        const std::vector<std::string> &start_interfaces,
+        const std::vector<std::string> &stop_interfaces) override;
+
+    hardware_interface::return_type perform_command_mode_switch(
+        const std::vector<std::string> &start_interfaces,
+        const std::vector<std::string> &stop_interfaces) override;
+
     hardware_interface::return_type read(const rclcpp::Time &time,
                                          const rclcpp::Duration &period) final;
     hardware_interface::return_type write(const rclcpp::Time &time,
@@ -73,18 +86,30 @@ public:
 
     int Servoj(const std::array<double, 6> joint_position_command);
 
+    int speedServo(const std::array<double, 6> joint_velocity_command);
+
     void configSubscribe(RtdeClientPtr cli);
 
 private:
+    bool connectRpcClient();
+    bool connectRtdeClient();
+    bool probeIoControlLayout();
+    void initAsyncSdkCommands();
+    void readIoControlConfigStates();
+    void readRobotManageStates();
+    void readRobotConfigStates();
+    void checkAsyncSdkCommands();
+
     std::shared_ptr<RpcClient> rpc_client_{ nullptr };
     std::shared_ptr<RtdeClient> rtde_client_{ nullptr };
     std::vector<std::string> joint_names_;
     std::mutex rtde_mtx_;
+    std::mutex sdk_command_mtx_;
     std::string robot_ip_;
     std::string robot_name_;
 
-    std::array<double, 6> aubo_position_commands_;
-    std::array<double, 6> aubo_velocity_commands_;
+    std::array<double, 6> aubo_position_commands_{};
+    std::array<double, 6> aubo_velocity_commands_{};
     double speed_scaling_combined_;
     bool controllers_initialized_;
     bool servo_mode_start_{ false };
@@ -94,8 +119,9 @@ private:
     std::atomic<bool> robot_program_running_;
     std::atomic<bool> controller_reset_necessary_{ false };
     //    uint32_t runtime_state_;
-    std::atomic<bool> position_controller_running_;
-    std::atomic<bool> velocity_controller_running_;
+    std::atomic<bool> position_controller_running_{ false };
+    std::atomic<bool> velocity_controller_running_{ false };
+    std::atomic<bool> handguide_mode_active_{ false };
     std::atomic<bool> joint_forward_controller_running_;
     std::atomic<bool> cartesian_forward_controller_running_;
     std::atomic<bool> twist_controller_running_;
@@ -118,6 +144,82 @@ private:
     std::vector<double> actual_TCP_force_{ std::vector<double>(6, 0.) };
     std::vector<double> target_TCP_pose_{ std::vector<double>(6, 0.) };
     std::vector<double> target_TCP_speed_{ std::vector<double>(6, 0.) };
+    std::vector<double> actual_tool_pose_{ std::vector<double>(6, 0.) };
+    Payload actual_payload_{ 0.0, std::vector<double>(3, 0.0),
+                             std::vector<double>(3, 0.0),
+                             std::vector<double>(6, 0.0) };
+
+    std::uint64_t standard_digital_input_bits_{ 0 };
+    std::uint64_t standard_digital_output_bits_{ 0 };
+    std::uint64_t configurable_digital_input_bits_{ 0 };
+    std::uint64_t configurable_digital_output_bits_{ 0 };
+    std::uint64_t tool_digital_input_bits_{ 0 };
+    std::uint64_t tool_digital_output_bits_{ 0 };
+    std::vector<double> standard_analog_input_values_;
+    std::vector<double> standard_analog_output_values_;
+    std::vector<double> tool_analog_input_values_;
+    std::vector<double> tool_analog_output_values_;
+    bool tool_button_status_{ false };
+    std::uint64_t handle_status_{ 0 };
+    int handle_dev_state_{ 0 };
+
+    std::vector<double> standard_digital_input_states_;
+    std::vector<double> standard_digital_output_states_;
+    std::vector<double> configurable_digital_input_states_;
+    std::vector<double> configurable_digital_output_states_;
+    std::vector<double> tool_digital_input_states_;
+    std::vector<double> tool_digital_output_states_;
+    std::vector<double> standard_analog_input_states_;
+    std::vector<double> standard_analog_output_states_;
+    std::vector<double> tool_analog_input_states_;
+    std::vector<double> tool_analog_output_states_;
+    std::vector<double> tool_io_input_states_;
+    std::vector<double> tool_digital_input_action_states_;
+    std::vector<double> tool_digital_output_runstate_states_;
+    std::vector<double> tool_analog_input_domain_states_;
+    std::vector<double> tool_analog_output_domain_states_;
+    std::vector<double> tool_analog_output_runstate_states_;
+    double tool_voltage_output_domain_state_{ 0.0 };
+    double tool_button_status_state_{ 0.0 };
+    double handle_io_status_state_{ 0.0 };
+    double handle_dev_state_state_{ 0.0 };
+
+    std::array<double, 6> tcp_pose_state_{};
+    std::array<double, 6> tcp_speed_state_{};
+    std::array<double, 6> tcp_force_state_{};
+    std::array<double, 6> tool_pose_state_{};
+
+    std::array<double, 6> tcp_offset_state_{};
+    double payload_mass_state_{ 0.0 };
+    std::array<double, 3> payload_cog_state_{};
+
+    double handguide_enabled_state_{ 0.0 };
+    std::array<double, 5> handguide_free_axis_state_{ 1.0, 1.0, 1.0, 1.0,
+                                                     1.0 };
+    std::array<double, 6> handguide_feature_state_{};
+
+    double digital_output_type_command_;
+    double digital_output_pin_command_;
+    double digital_output_value_command_;
+    double digital_output_trigger_command_;
+    double analog_output_type_command_;
+    double analog_output_pin_command_;
+    double analog_output_value_command_;
+    double analog_output_trigger_command_;
+    double tool_voltage_output_domain_command_;
+    double tool_io_input_pin_command_;
+    double tool_io_input_value_command_;
+    double tool_io_input_trigger_command_;
+    double tool_io_config_type_command_;
+    double tool_io_config_pin_command_;
+    double tool_io_config_value_command_;
+    double tool_io_config_trigger_command_;
+    std::array<double, 6> tcp_offset_commands_{};
+    double payload_mass_command_;
+    std::array<double, 3> payload_cog_commands_{};
+    double handguide_enable_command_;
+    std::array<double, 5> handguide_free_axis_commands_{};
+    std::array<double, 6> handguide_feature_commands_{};
 
     RobotModeType robot_mode_ = RobotModeType::NoController;
     SafetyModeType safety_mode_ = SafetyModeType::Normal;

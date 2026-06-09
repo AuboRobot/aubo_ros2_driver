@@ -1,0 +1,16 @@
+<library path="aubo_controller_plugin">
+  <class name="aubo_controllers/AuboIoStatusController"
+         type="aubo_driver::AuboIoStatusController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Publishes AUBO IO/status states and exposes ROS services through ros2_control interfaces.
+    </description>
+  </class>
+  <class name="aubo_controllers/FreedriveModeController"
+         type="aubo_driver::FreedriveModeController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Controls AUBO handguide mode through ros2_control command interfaces.
+    </description>
+  </class>
+</library>

@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import (
     Command,
     FindExecutable,
@@ -185,7 +185,6 @@ def generate_launch_description():
         output="both",
         parameters=[robot_description],
     )
-
     rviz_node = Node(
         package="rviz2",
         condition=IfCondition(launch_rviz),
@@ -205,6 +204,35 @@ def generate_launch_description():
         ],
     )
 
+    io_and_status_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        condition=UnlessCondition(use_fake_hardware),
+        arguments=[
+            "io_and_status_controller",
+            "--controller-manager",
+            "/controller_manager",
+        ],
+    )
+
+    freedrive_mode_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        condition=UnlessCondition(use_fake_hardware),
+        arguments=[
+            "freedrive_mode_controller",
+            "--controller-manager",
+            "/controller_manager",
+        ],
+    )
+
+    controller_stopper_node = Node(
+        package="aubo_ros2_driver",
+        executable="controller_stopper",
+        condition=UnlessCondition(use_fake_hardware),
+        output="both",
+    )
+
     initial_joint_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -216,6 +244,9 @@ def generate_launch_description():
         robot_state_publisher_node,
         rviz_node,
         joint_state_broadcaster_spawner,
+        io_and_status_controller_spawner,
+        freedrive_mode_controller_spawner,
+        controller_stopper_node,
         initial_joint_controller_spawner,
     ]
 

@@ -1,0 +1,4 @@
+int32 domain
+---
+bool success
+string message

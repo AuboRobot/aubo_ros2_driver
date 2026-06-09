@@ -100,6 +100,7 @@ target_include_directories(
   PRIVATE
   include
 )
+
 add_executable(aubo_ros2_control_node
   src/aubo_ros2_control_node.cpp
 )
@@ -116,11 +117,31 @@ ament_target_dependencies(aubo_command_node
   aubo_msgs
   geometry_msgs
   rclcpp
+add_executable(robot_state_helper
+  src/robot_state_helper.cpp
+  src/robot_state_helper_node.cpp
+)
+ament_target_dependencies(robot_state_helper ${THIS_PACKAGE_INCLUDE_DEPENDS})
+target_include_directories(
+  robot_state_helper
+  PRIVATE
+  include
+)
+
+add_executable(controller_stopper
+  src/controller_stopper.cpp
+  src/controller_stopper_node.cpp
+)
+ament_target_dependencies(controller_stopper ${THIS_PACKAGE_INCLUDE_DEPENDS})
+target_include_directories(
+  controller_stopper
+  PRIVATE
+  include
 )
 
 pluginlib_export_plugin_description_file(hardware_interface hardware_interface_plugin.xml)
 install(
-  TARGETS aubo_ros2_control_node aubo_command_node
+  TARGETS aubo_ros2_control_node aubo_command_node robot_state_helper controller_stopper
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
