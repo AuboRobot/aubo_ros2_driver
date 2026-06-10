@@ -58,12 +58,20 @@ ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 | `1` | 截断式规划伺服模式，默认进入模式 |
 | `2` | 透传模式，直接下发 |
 | `3` | 透传模式，缓存下发 |
-| `4` | 1ms 透传模式，缓存下发 |
+| `4` | 1ms 透传模式，缓存下发；需控制器支持 1000Hz 点位消费，否则通常按 200Hz 使用 |
 | `5` | 规划伺服模式 |
-| `6` | 截断式规划伺服模式，可以叠加力控 |
-| `7` | 规划伺服模式，可以叠加力控 |
+| `6` | 截断式规划伺服模式，可以叠加 SDK `ForceControl` 力控 |
+| `7` | 规划伺服模式，可以叠加 SDK `ForceControl` 力控 |
 
 其中模式 `1` 添加路点后会实时调整目标点和规划路线，目标点被更新后不保证经过之前设定的目标点；模式 `5` 会保证经过所有目标点。
+
+模式推荐：
+
+| 场景 | 推荐 |
+| --- | --- |
+| 非实时场景，如 MoveIt、JointTrajectoryController、普通 Linux 控制链路 | 默认使用 `1`；需要保证经过所有点位时可选 `5` |
+| 实时场景，如外部控制器稳定周期下发点位 | 可选 `2` / `3`；控制器支持 1000Hz 点位消费时再考虑 `4` |
+| 需要叠加力控 | 按场景选择 `6` 或 `7`；力控指 AUBO SDK `ForceControl` 类提供的机器人控制器层力控制 |
 
 ```bash
 ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:=192.168.127.128 \
