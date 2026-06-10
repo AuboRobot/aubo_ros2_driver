@@ -63,8 +63,6 @@ ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 | `6` | 截断式规划伺服模式，可以叠加 SDK `ForceControl` 力控 |
 | `7` | 规划伺服模式，可以叠加 SDK `ForceControl` 力控 |
 
-其中模式 `1` 添加路点后会实时调整目标点和规划路线，目标点被更新后不保证经过之前设定的目标点；模式 `5` 会保证经过所有目标点。
-
 模式推荐：
 
 | 场景 | 推荐 |
@@ -72,6 +70,13 @@ ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 | 非实时场景，如 MoveIt、JointTrajectoryController、普通 Linux 控制链路 | 默认使用 `1`；需要保证经过所有点位时可选 `5` |
 | 实时场景，如外部控制器稳定周期下发点位 | 可选 `2` / `3`；控制器支持 1000Hz 点位消费时再考虑 `4` |
 | 需要叠加力控 | 按场景选择 `6` 或 `7`；力控指 AUBO SDK `ForceControl` 类提供的机器人控制器层力控制 |
+
+说明：
+
+- 模式 `1` 会持续修正目标点和规划路线，更适合非实时控制链路；模式 `5` 会保证经过所有目标点。
+- 直接使用 SDK `servoJoint` 发送点位流时，建议保持 `t` 与下发周期一致，且不小于机器人内部控制周期。
+- 点位过密应重采样或合并冗余点，点位过远应重新定时或放慢轨迹。
+- 带缓存的模式队列满时会返回错误；实时跟踪可丢弃过期点并发送最新点，离线轨迹应等待并重试当前点。
 
 ```bash
 ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:=192.168.127.128 \
