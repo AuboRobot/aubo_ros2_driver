@@ -60,6 +60,67 @@ source install/setup.bash
 ros2 launch aubo_ros2_driver aubo_client.launch.py robot_ip:=127.0.0.1 log_level:=info
 ```
 
+## 独立 Topic 命令节点
+
+该节点直接通过 AUBO SDK 控制机械臂，不使用 ros2_control 硬件插件。不要同时启动其他会控制同一机械臂的驱动。
+
+```bash
+source install/setup.bash
+ros2 launch aubo_ros2_driver aubo_command.launch.py robot_ip:=192.168.127.128
+```
+
+命令 Topic：
+
+- `/aubo/power_command` (`aubo_msgs/msg/AuboPowerCommand`)：`power_on=true` 上电并启动，`false` 下电。
+- `/aubo/joint_move` (`aubo_msgs/msg/AuboJointMove`)：六轴关节目标，角度使用弧度，速度使用 rad/s，加速度使用 rad/s^2。
+- `/aubo/linear_move` (`aubo_msgs/msg/AuboLinearMove`)：目标 `PoseStamped`，必须使用配置的 `base_frame`（默认 `base_link`）；位置单位米，速度/加速度单位 m/s、m/s^2。
+
+### 上下电
+
+上电命令会请求机械臂上电并启动（松刹车），等待进入 Running 模式：
+
+```bash
+ros2 topic pub --once /aubo/power_command aubo_msgs/msg/AuboPowerCommand \
+"{command_id: 'power-on-001', power_on: true}"
+```
+
+下电命令：
+
+```bash
+ros2 topic pub --once /aubo/power_command aubo_msgs/msg/AuboPowerCommand \
+"{command_id: 'power-off-001', power_on: false}"
+```
+
+### 关节运动
+
+先确认机械臂处于可运动状态，并根据机器人型号、当前姿态和工作空间设置安全的六轴目标。以下仅为消息格式示例；位置单位为弧度：
+
+```bash
+ros2 topic pub --once /aubo/joint_move aubo_msgs/msg/AuboJointMove \
+"{command_id: 'joint-001', positions: [0.0, -0.2, 0.3, 0.0, 0.2, 0.0], max_velocity: 0.2, max_acceleration: 0.4}"
+```
+
+### 直线运动
+
+目标位姿以 `base_frame` 为参考坐标系，默认是 `base_link`。位置单位为米，方向使用四元数；速度单位为 m/s，加速度单位为 m/s^2，混合半径单位为米。下面的位姿只展示消息格式，使用前要确认目标在机械臂可达且无碰撞的工作空间内：
+
+```bash
+ros2 topic pub --once /aubo/linear_move aubo_msgs/msg/AuboLinearMove \
+"{command_id: 'linear-001', target: {header: {frame_id: 'base_link'}, pose: {position: {x: 0.30, y: 0.0, z: 0.30}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}, speed: 0.05, acceleration: 0.1, blend_radius: 0.0}"
+```
+
+### 查看执行结果
+
+在另一个终端订阅状态 Topic：
+
+```bash
+ros2 topic echo /aubo/command_status
+```
+
+每条命令的 `command_id` 必须非空，建议每次请求使用唯一值。状态包括 `accepted`、`running`、`succeeded`、`failed` 和 `rejected`。节点一次只接收一条命令执行；正在执行时发布的新命令会以 `rejected` 状态返回。若收到 `failed` 或 `rejected`，请检查状态消息的 `message` 字段及节点日志。
+
+该节点直接通过 AUBO SDK 控制机器人。不要同时启动其他会控制同一机械臂的驱动。上电/下电 Topic 不是急停接口；急停必须使用机器人控制柜或安全系统提供的硬件安全功能。
+
 ## 调用示例
 
 ```bash
