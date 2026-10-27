@@ -108,9 +108,19 @@ ament_target_dependencies(aubo_ros2_control_node
     controller_manager 
     rclcpp)
 
+add_executable(aubo_command_node
+  src/aubo_command_node.cpp
+)
+target_link_libraries(aubo_command_node aubo_sdk::aubo_sdk Threads::Threads)
+ament_target_dependencies(aubo_command_node
+  aubo_msgs
+  geometry_msgs
+  rclcpp
+)
+
 pluginlib_export_plugin_description_file(hardware_interface hardware_interface_plugin.xml)
 install(
-  TARGETS aubo_ros2_control_node 
+  TARGETS aubo_ros2_control_node aubo_command_node
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
@@ -146,4 +156,3 @@ ament_python_install_package(${PROJECT_NAME})
 #)
 
 ament_package()
-

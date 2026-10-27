@@ -14,6 +14,10 @@ set(msg_files
   msg/MasterboardDataMsg.msg
   msg/RobotModeDataMsg.msg
   msg/ToolDataMsg.msg
+  msg/AuboPowerCommand.msg
+  msg/AuboJointMove.msg
+  msg/AuboLinearMove.msg
+  msg/AuboCommandStatus.msg
 )
 
 set(srv_files
@@ -38,4 +42,3 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 ament_export_dependencies(rosidl_default_runtime)
 
 ament_package()
-
