@@ -1,0 +1,5 @@
+uint32 pin
+bool input
+---
+bool success
+string message

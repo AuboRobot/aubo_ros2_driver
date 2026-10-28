@@ -3,3 +3,18 @@
 .vscode/browse.vc.db-shm
 .vscode/browse.vc.db-wal
 .vscode/c_cpp_properties.json
+/build
+/install
+/log
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+
+# Python cache artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

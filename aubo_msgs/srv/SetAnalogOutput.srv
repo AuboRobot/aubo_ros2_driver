@@ -1,0 +1,9 @@
+uint8 STANDARD=0
+uint8 TOOL=1
+
+uint8 output_type
+uint32 pin
+float64 state
+---
+bool success
+string message

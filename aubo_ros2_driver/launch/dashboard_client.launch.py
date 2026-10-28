@@ -1,37 +1,44 @@
 from launch import LaunchDescription
-from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
 
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'robot_ip',
             default_value='127.0.0.1',
-            description='TCP server IP'
+            description='JSON-RPC WebSocket server IP'
         ),
         DeclareLaunchArgument(
             'port',
-            default_value='30004',
-            description='TCP server port'
+            default_value='9012',
+            description='JSON-RPC WebSocket server port'
         ),
         DeclareLaunchArgument(
-            'robot', 
+            'robot',
             default_value='rob1'
         ),
         DeclareLaunchArgument(
-            'log_level', 
+            'request_timeout_ms',
+            default_value='5000',
+            description='JSON-RPC request timeout in milliseconds'
+        ),
+        DeclareLaunchArgument(
+            'log_level',
             default_value='info'
         ),
         Node(
             package='aubo_ros2_driver',
-            executable='aubo_client_node.py',
-            name='aubo_client',
+            executable='dashboard_client',
+            name='dashboard_client',
             output='screen',
             parameters=[{
-                'tcp_client.ip': LaunchConfiguration('robot_ip'),
-                'tcp_client.port': LaunchConfiguration('port'),
-                'tcp_client.robot_prefix': LaunchConfiguration('robot'),
+                'robot_ip': LaunchConfiguration('robot_ip'),
+                'port': LaunchConfiguration('port'),
+                'robot': LaunchConfiguration('robot'),
+                'request_timeout_ms': LaunchConfiguration('request_timeout_ms'),
             }],
             arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')]
         )

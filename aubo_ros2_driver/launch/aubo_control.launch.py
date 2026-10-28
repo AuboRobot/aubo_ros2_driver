@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import (
     Command,
     FindExecutable,
@@ -84,10 +84,31 @@ def generate_launch_description():
     )
     declared_arguments.append(
         DeclareLaunchArgument(
+            "servo_mode",
+            default_value="1",
+            description="Servo mode selected by MotionControl.setServoModeSelect.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
             "aubo_port",
             default_value="80",
             description="Port at which RWS can be found. \
             Used only if 'use_fake_hardware' parameter is false.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "dashboard_port",
+            default_value="9012",
+            description="AUBO dashboard JSON-RPC WebSocket port.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "dashboard_robot",
+            default_value="rob1",
+            description="Robot prefix used by AUBO dashboard JSON-RPC methods.",
         )
     )
     declared_arguments.append(
@@ -121,6 +142,9 @@ def generate_launch_description():
     use_fake_hardware = LaunchConfiguration("use_fake_hardware")
     fake_sensor_commands = LaunchConfiguration("fake_sensor_commands")
     robot_ip = LaunchConfiguration("robot_ip")
+    servo_mode = LaunchConfiguration("servo_mode")
+    dashboard_port = LaunchConfiguration("dashboard_port")
+    dashboard_robot = LaunchConfiguration("dashboard_robot")
     aubo_type = LaunchConfiguration("aubo_type")
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
@@ -144,6 +168,9 @@ def generate_launch_description():
             " ",
             "robot_ip:=",
             robot_ip,
+            " ",
+            "servo_mode:=",
+            servo_mode,
             " ",
             "aubo_type:=",
             aubo_type,
@@ -174,7 +201,6 @@ def generate_launch_description():
         output="both",
         parameters=[robot_description],
     )
-
     rviz_node = Node(
         package="rviz2",
         condition=IfCondition(launch_rviz),
@@ -194,6 +220,50 @@ def generate_launch_description():
         ],
     )
 
+    io_and_status_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        condition=UnlessCondition(use_fake_hardware),
+        arguments=[
+            "io_and_status_controller",
+            "--controller-manager",
+            "/controller_manager",
+        ],
+    )
+
+    freedrive_mode_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        condition=UnlessCondition(use_fake_hardware),
+        arguments=[
+            "freedrive_mode_controller",
+            "--controller-manager",
+            "/controller_manager",
+        ],
+    )
+
+    controller_stopper_node = Node(
+        package="aubo_ros2_driver",
+        executable="controller_stopper",
+        condition=UnlessCondition(use_fake_hardware),
+        output="both",
+    )
+
+    dashboard_client_node = Node(
+        package="aubo_ros2_driver",
+        executable="dashboard_client",
+        name="dashboard_client",
+        condition=UnlessCondition(use_fake_hardware),
+        output="both",
+        parameters=[
+            {
+                "robot_ip": robot_ip,
+                "port": dashboard_port,
+                "robot": dashboard_robot,
+            }
+        ],
+    )
+
     initial_joint_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -205,6 +275,10 @@ def generate_launch_description():
         robot_state_publisher_node,
         rviz_node,
         joint_state_broadcaster_spawner,
+        io_and_status_controller_spawner,
+        freedrive_mode_controller_spawner,
+        controller_stopper_node,
+        dashboard_client_node,
         initial_joint_controller_spawner,
     ]
 

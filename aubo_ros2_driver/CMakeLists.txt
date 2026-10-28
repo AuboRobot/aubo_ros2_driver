@@ -18,12 +18,12 @@ set(ENV{CPM_SOURCE_CACHE} $ENV{HOME}/.cache/CPM)
 		if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
 			# 使用 ARM64 版本 SDK 的 URL
       message("${PROJECT_NAME}: current system processor type: selecting 'aarch64'.")
-			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.24.1-rc.3-Linux_aarch64+318754d.zip")
+			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_aarch64+b7ed04d.zip")
 		else()
 			# 使用 x86_64 版本 SDK 的 URL
       message("${PROJECT_NAME}: current system processor type: selecting 'x86'.")
 			# set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.22.1-Linux_x86_64+2ed0c14.zip")
-			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.24.1-rc.3-Linux_x86_64+318754d.zip")
+			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_x86_64+b7ed04d.zip")
 		endif()
 		
         FetchContent_Declare(
@@ -53,7 +53,8 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(aubo_dashboard_msgs REQUIRED)
 find_package(aubo_msgs REQUIRED)
 
-find_package(Boost REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system)
+find_package(nlohmann_json REQUIRED)
 find_package(Threads REQUIRED)
 set(THIS_PACKAGE_INCLUDE_DEPENDS
   controller_manager
@@ -84,7 +85,6 @@ include_directories(
 )
 
 install(PROGRAMS
-  scripts/aubo_client_node.py
   scripts/test_aubo_jsonrpc.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -100,6 +100,7 @@ target_include_directories(
   PRIVATE
   include
 )
+
 add_executable(aubo_ros2_control_node
   src/aubo_ros2_control_node.cpp
 )
@@ -117,10 +118,43 @@ ament_target_dependencies(aubo_command_node
   geometry_msgs
   rclcpp
 )
+add_executable(robot_state_helper
+  src/robot_state_helper.cpp
+  src/robot_state_helper_node.cpp
+)
+ament_target_dependencies(robot_state_helper ${THIS_PACKAGE_INCLUDE_DEPENDS})
+target_include_directories(
+  robot_state_helper
+  PRIVATE
+  include
+)
+
+add_executable(controller_stopper
+  src/controller_stopper.cpp
+  src/controller_stopper_node.cpp
+)
+ament_target_dependencies(controller_stopper ${THIS_PACKAGE_INCLUDE_DEPENDS})
+target_include_directories(
+  controller_stopper
+  PRIVATE
+  include
+)
+
+add_executable(dashboard_client
+  src/dashboard_client_ros.cpp
+  src/dashboard_client_node.cpp
+)
+ament_target_dependencies(dashboard_client ${THIS_PACKAGE_INCLUDE_DEPENDS})
+target_link_libraries(dashboard_client Boost::system nlohmann_json::nlohmann_json)
+target_include_directories(
+  dashboard_client
+  PRIVATE
+  include
+)
 
 pluginlib_export_plugin_description_file(hardware_interface hardware_interface_plugin.xml)
 install(
-  TARGETS aubo_ros2_control_node aubo_command_node
+  TARGETS aubo_ros2_control_node aubo_command_node robot_state_helper controller_stopper dashboard_client
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

@@ -11,6 +11,12 @@ controller_manager:
     forward_command_controller_position:
       type: forward_command_controller/ForwardCommandController
 
+    io_and_status_controller:
+      type: aubo_controllers/AuboIoStatusController
+
+    freedrive_mode_controller:
+      type: aubo_controllers/FreedriveModeController
+
 joint_trajectory_controller:
   ros__parameters:
     joints:
@@ -42,3 +48,11 @@ forward_command_controller_position:
       - wrist2_joint
       - wrist3_joint
     interface_name: position
+
+io_and_status_controller:
+  ros__parameters: {}
+
+freedrive_mode_controller:
+  ros__parameters:
+    free_axes: [1, 1, 1, 1, 1]
+    feature: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

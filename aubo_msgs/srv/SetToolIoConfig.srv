@@ -1,0 +1,12 @@
+uint8 DIGITAL_INPUT_ACTION=0
+uint8 DIGITAL_OUTPUT_RUNSTATE=1
+uint8 ANALOG_INPUT_DOMAIN=2
+uint8 ANALOG_OUTPUT_DOMAIN=3
+uint8 ANALOG_OUTPUT_RUNSTATE=4
+
+uint8 config_type
+uint32 pin
+int32 value
+---
+bool success
+string message
