@@ -51,3 +51,8 @@ bash ~/repos/aubo_ros2_driver/aubo_ros2_driver/scripts/check_aubo_rt.sh
 
 - 双臂 `aubo_mode_manager` 整包、GUI 解除防护按钮、双臂 hardware 插件。
 - dual 的 S100/`/mnt/ssd` nosuid 专项（脚本已保留检测逻辑，x86 PC 通常不需要）。
+
+## Diagnostics servo_mode（频率联调）
+
+与上表「模式切换 SERVO/NORMAL/TEACH」不同：`aubo_control.launch.py` 的 `servo_mode:=N` / `aubo_diag.py sweep --servo-mode N` 对应 SDK `setServoModeSelect`（1–7）。
+本机假机频率矩阵与 200Hz 规划/透传差异见 develop-workflows：`env_deploy/arcs/LOCAL_DIAG.md`。
