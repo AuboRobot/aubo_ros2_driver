@@ -100,6 +100,10 @@ private:
     hardware_interface::return_type latchServoFault(const char *reason);
     bool connectRpcClient();
     bool connectRtdeClient();
+    /** 未上电则 poweron，已上电跳过 poweron；未 Running 则 startup。已 Running 整段跳过。 */
+    bool ensureRobotRunning();
+    /** 仅在 ProtectiveStop 时调用 setUnlockProtectiveStop，等到 Normal/ReducedMode。 */
+    bool clearProtectiveStopIfNeeded();
     bool probeIoControlLayout();
     void initAsyncSdkCommands();
     void readIoControlConfigStates();

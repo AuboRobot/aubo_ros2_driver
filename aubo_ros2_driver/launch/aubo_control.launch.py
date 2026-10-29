@@ -14,6 +14,7 @@ from launch.substitutions import (
     FindExecutable,
     LaunchConfiguration,
     PathJoinSubstitution,
+    PythonExpression,
 )
 from launch_ros.actions import Node
 
@@ -65,6 +66,11 @@ def launch_setup(context, *args, **kwargs):
         aubo_type += "_calibrated"
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
+    remote_viz = LaunchConfiguration("remote_viz")
+    # remote_viz:=true → 不启本机 RViz（对齐 dual 多机）
+    effective_launch_rviz = PythonExpression(
+        ["'false' if '", remote_viz, "' == 'true' else '", launch_rviz, "'"]
+    )
 
     description_package = description_package_cfg.perform(context)
     description_share = get_package_share_directory(description_package)
@@ -135,7 +141,7 @@ def launch_setup(context, *args, **kwargs):
 
     rviz_node = Node(
         package="rviz2",
-        condition=IfCondition(launch_rviz),
+        condition=IfCondition(effective_launch_rviz),
         executable="rviz2",
         name="rviz2",
         output="log",
@@ -323,9 +329,9 @@ def generate_launch_description():
     declared_arguments.append(
         DeclareLaunchArgument(
             "robot_ip",
-            default_value="None",
-            description="IP of robot computer. \
-            Used only if 'use_fake_hardware' parameter is false.",
+            default_value="127.0.0.1",
+            description="IP of robot/controller. ARCS sim-as-real on this PC must be 127.0.0.1 (not LAN IP). Used only if use_fake_hardware is false."
+            "Used only if 'use_fake_hardware' parameter is false.",
         )
     )
     declared_arguments.append(
@@ -375,6 +381,14 @@ def generate_launch_description():
     declared_arguments.append(
         DeclareLaunchArgument(
             "launch_rviz", default_value="false", description="Launch RViz?"
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "remote_viz",
+            default_value="false",
+            description="true=不启本机 RViz（多机通讯）；PC 另起 "
+            "aubo_moveit_config remote_moveit_rviz.launch.py",
         )
     )
 

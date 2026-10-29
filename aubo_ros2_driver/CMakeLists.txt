@@ -150,6 +150,30 @@ target_include_directories(
 )
 
 pluginlib_export_plugin_description_file(hardware_interface hardware_interface_plugin.xml)
+
+# rebuild / symlink-install 会清掉 file capabilities；用 ALL 目标每次编译补回 FIFO caps。
+# 无免密 sudo 时脚本 WARN 并以 0 退出，不阻断 colcon。
+add_custom_target(apply_aubo_rt_caps ALL
+  COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/apply_aubo_rt_caps.sh"
+          "$<TARGET_FILE:aubo_ros2_control_node>"
+  DEPENDS aubo_ros2_control_node
+  COMMENT "Applying RT file capabilities to aubo_ros2_control_node"
+  VERBATIM
+)
+install(PROGRAMS
+  scripts/apply_aubo_rt_caps.sh
+  scripts/configure_aubo_realtime.sh
+  scripts/check_aubo_rt.sh
+  scripts/aubo_setcap_rt_wrapper.sh
+  scripts/switch_mode.sh
+  DESTINATION lib/${PROJECT_NAME}
+)
+install(CODE "
+  execute_process(
+    COMMAND bash \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/apply_aubo_rt_caps.sh\"
+            \"\${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/aubo_ros2_control_node\"
+  )
+")
 install(
   TARGETS aubo_ros2_control_node aubo_command_node robot_state_helper controller_stopper dashboard_client
   DESTINATION lib/${PROJECT_NAME}

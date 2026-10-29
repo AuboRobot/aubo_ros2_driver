@@ -64,3 +64,8 @@ All 8 packages: `aubo_msgs`, `aubo_dashboard_msgs`, `aubo_description`, `aubo_co
 - Upstream has no `humble` branch; this is a local port from AGX Jazzy dirty tree.
 - Gazebo classic packages (`ros-humble-gazebo-ros`, `gazebo-ros2-control`) are available via apt but not required to *build* `aubo_gazebo` (install-only package).
 - Do not push AGX credentials; SDK zip is public download / local cache only.
+
+
+## Dual 对齐（见 DUAL_ALIGN.md）
+
+分支 `dual-align-arcs`：自动上电、防护停止清理、setcap FIFO、remote RViz、`robot_ip` 默认 `127.0.0.1`（ARCS sim-as-real）。

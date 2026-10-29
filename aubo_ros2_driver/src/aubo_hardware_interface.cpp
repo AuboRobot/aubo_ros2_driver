@@ -10,7 +10,80 @@
 #include <ctime>
 #include <limits>
 #include <thread>
+#include <initializer_list>
+#include <iostream>
 namespace aubo_driver {
+
+namespace {
+const char * robotModeName(RobotModeType mode)
+{
+    switch (mode) {
+    case RobotModeType::NoController: return "NoController";
+    case RobotModeType::Disconnected: return "Disconnected";
+    case RobotModeType::ConfirmSafety: return "ConfirmSafety";
+    case RobotModeType::Booting: return "Booting";
+    case RobotModeType::PowerOff: return "PowerOff";
+    case RobotModeType::PowerOn: return "PowerOn";
+    case RobotModeType::Idle: return "Idle";
+    case RobotModeType::BrakeReleasing: return "BrakeReleasing";
+    case RobotModeType::BackDrive: return "BackDrive";
+    case RobotModeType::Running: return "Running";
+    case RobotModeType::Maintaince: return "Maintaince";
+    case RobotModeType::Error: return "Error";
+    case RobotModeType::PowerOffing: return "PowerOffing";
+    }
+    return "Unknown";
+}
+
+const char * safetyModeName(SafetyModeType mode)
+{
+    switch (mode) {
+    case SafetyModeType::Undefined: return "Undefined";
+    case SafetyModeType::Normal: return "Normal";
+    case SafetyModeType::ReducedMode: return "ReducedMode";
+    case SafetyModeType::Recovery: return "Recovery";
+    case SafetyModeType::Violation: return "Violation";
+    case SafetyModeType::ProtectiveStop: return "ProtectiveStop";
+    case SafetyModeType::SafeguardStop: return "SafeguardStop";
+    case SafetyModeType::SystemEmergencyStop: return "SystemEmergencyStop";
+    case SafetyModeType::RobotEmergencyStop: return "RobotEmergencyStop";
+    case SafetyModeType::Fault: return "Fault";
+    }
+    return "Unknown";
+}
+
+bool isAbortRobotMode(RobotModeType mode)
+{
+    return mode == RobotModeType::NoController ||
+           mode == RobotModeType::Disconnected ||
+           mode == RobotModeType::ConfirmSafety ||
+           mode == RobotModeType::Maintaince ||
+           mode == RobotModeType::Error;
+}
+
+bool isFatalSafetyMode(SafetyModeType mode)
+{
+    return mode == SafetyModeType::Fault ||
+           mode == SafetyModeType::RobotEmergencyStop ||
+           mode == SafetyModeType::SystemEmergencyStop;
+}
+
+bool isPowerProgressMode(RobotModeType mode)
+{
+    return mode == RobotModeType::Booting ||
+           mode == RobotModeType::PowerOn ||
+           mode == RobotModeType::Idle ||
+           mode == RobotModeType::BrakeReleasing ||
+           mode == RobotModeType::BackDrive ||
+           mode == RobotModeType::Running;
+}
+
+bool commandAccepted(int ret)
+{
+    return ret == 0 || ret == AUBO_BUSY;
+}
+}  // namespace
+
 
 AuboHardwareInterface::~AuboHardwareInterface()
 {
@@ -312,12 +385,255 @@ void AuboHardwareInterface::readRobotConfigStates()
     }
 }
 
+
+bool AuboHardwareInterface::clearProtectiveStopIfNeeded()
+{
+    if (!rpc_client_ || robot_name_.empty()) {
+        return false;
+    }
+    try {
+        auto iface = rpc_client_->getRobotInterface(robot_name_);
+        const auto safety_mode = iface->getRobotState()->getSafetyModeType();
+        if (safety_mode != SafetyModeType::ProtectiveStop) {
+            return true;
+        }
+        RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
+            "[protective_stop] %s 处于 ProtectiveStop，调用 setUnlockProtectiveStop()",
+            robot_name_.c_str());
+        const int ret = iface->getRobotManage()->setUnlockProtectiveStop();
+        if (ret != 0 && ret != AUBO_BUSY) {
+            RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                "[protective_stop] setUnlockProtectiveStop failed ret=%d", ret);
+            return false;
+        }
+        for (int i = 0; i < 40; ++i) {
+            const auto current = iface->getRobotState()->getSafetyModeType();
+            if (current == SafetyModeType::Normal ||
+                current == SafetyModeType::ReducedMode) {
+                RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+                    "[protective_stop] 已解除，当前 %s", safetyModeName(current));
+                return true;
+            }
+            if (i == 0 || i % 10 == 0) {
+                RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
+                    "[protective_stop] 等待退出 ProtectiveStop，当前 %s",
+                    safetyModeName(current));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "[protective_stop] 解除超时，当前 %s",
+            safetyModeName(iface->getRobotState()->getSafetyModeType()));
+        return false;
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "[protective_stop] 异常: %s", e.what());
+        return false;
+    }
+}
+
+bool AuboHardwareInterface::ensureRobotRunning()
+{
+    if (!rpc_client_ || robot_name_.empty()) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] 机器人接口为空");
+        return false;
+    }
+    auto iface = rpc_client_->getRobotInterface(robot_name_);
+    if (!iface || !iface->getRobotState() || !iface->getRobotManage()) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] 机器人接口为空");
+        return false;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+    constexpr auto kPoll = std::chrono::milliseconds(200);
+    const auto & name = robot_name_;
+
+    auto read_state = [&](RobotModeType & mode, SafetyModeType & safety) -> bool {
+        try {
+            mode = iface->getRobotState()->getRobotModeType();
+            safety = iface->getRobotState()->getSafetyModeType();
+            return true;
+        } catch (const std::exception & e) {
+            RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
+                "[startup] %s 读取模式失败: %s", name.c_str(), e.what());
+            return false;
+        }
+    };
+
+    auto wait_mode = [&](std::initializer_list<RobotModeType> targets,
+                         bool abort_on_power_off_regression,
+                         RobotModeType & mode) -> bool {
+        bool seen_progress = isPowerProgressMode(mode);
+        RobotModeType last_logged = mode;
+        while (std::chrono::steady_clock::now() < deadline) {
+            SafetyModeType safety = SafetyModeType::Undefined;
+            if (!read_state(mode, safety)) {
+                std::this_thread::sleep_for(kPoll);
+                continue;
+            }
+            if (mode != last_logged) {
+                RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+                    "[startup] %s 模式 %s，安全状态 %s",
+                    name.c_str(), robotModeName(mode), safetyModeName(safety));
+                last_logged = mode;
+            }
+            for (const auto target : targets) {
+                if (mode == target) {
+                    return true;
+                }
+            }
+            if (isAbortRobotMode(mode) || isFatalSafetyMode(safety)) {
+                RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                    "[startup] %s 上电中止，模式 %s，安全状态 %s",
+                    name.c_str(), robotModeName(mode), safetyModeName(safety));
+                return false;
+            }
+            if (abort_on_power_off_regression && seen_progress &&
+                mode == RobotModeType::PowerOff) {
+                RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                    "[startup] %s 上电回退到 PowerOff，安全状态 %s",
+                    name.c_str(), safetyModeName(safety));
+                return false;
+            }
+            if (isPowerProgressMode(mode)) {
+                seen_progress = true;
+            }
+            std::this_thread::sleep_for(kPoll);
+        }
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] %s 等待模式超时，当前 %s",
+            name.c_str(), robotModeName(mode));
+        return false;
+    };
+
+    RobotModeType mode = RobotModeType::NoController;
+    SafetyModeType safety = SafetyModeType::Undefined;
+    if (!read_state(mode, safety)) {
+        return false;
+    }
+    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+        "[startup] %s 当前模式 %s，安全状态 %s",
+        name.c_str(), robotModeName(mode), safetyModeName(safety));
+
+    if (mode == RobotModeType::Running) {
+        RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] %s 已处于 Running，跳过上电与启动", name.c_str());
+        return true;
+    }
+    if (isAbortRobotMode(mode) || isFatalSafetyMode(safety)) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] %s 无法上电，模式 %s，安全状态 %s",
+            name.c_str(), robotModeName(mode), safetyModeName(safety));
+        return false;
+    }
+
+    if (mode == RobotModeType::PowerOffing) {
+        if (!wait_mode(
+                {RobotModeType::PowerOff, RobotModeType::Idle, RobotModeType::Running},
+                false, mode)) {
+            return false;
+        }
+        if (mode == RobotModeType::Running) {
+            return true;
+        }
+    }
+
+    if (mode == RobotModeType::PowerOff) {
+        int ret = -1;
+        try {
+            ret = iface->getRobotManage()->poweron();
+        } catch (const std::exception & e) {
+            RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                "[startup] %s poweron 异常: %s", name.c_str(), e.what());
+            return false;
+        }
+        RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] %s 请求上电 poweron ret=%d", name.c_str(), ret);
+        if (!commandAccepted(ret)) {
+            return false;
+        }
+        if (!wait_mode({RobotModeType::Idle, RobotModeType::Running}, true, mode)) {
+            return false;
+        }
+    } else if (mode == RobotModeType::BrakeReleasing) {
+        RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] %s 刹车松开中，跳过 poweron", name.c_str());
+        if (!wait_mode({RobotModeType::Running}, true, mode)) {
+            return false;
+        }
+    } else {
+        RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] %s 已上电（模式 %s），跳过 poweron",
+            name.c_str(), robotModeName(mode));
+        if (mode != RobotModeType::Idle && mode != RobotModeType::BackDrive &&
+            mode != RobotModeType::Running) {
+            if (!wait_mode(
+                    {RobotModeType::Idle, RobotModeType::Running,
+                     RobotModeType::BackDrive, RobotModeType::BrakeReleasing},
+                    true, mode)) {
+                return false;
+            }
+        }
+    }
+
+    if (mode == RobotModeType::Running) {
+        return true;
+    }
+    if (mode == RobotModeType::BrakeReleasing) {
+        if (!wait_mode({RobotModeType::Running}, true, mode)) {
+            return false;
+        }
+        return true;
+    }
+
+    int ret = -1;
+    try {
+        ret = iface->getRobotManage()->startup();
+    } catch (const std::exception & e) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "[startup] %s startup 异常: %s", name.c_str(), e.what());
+        return false;
+    }
+    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+        "[startup] %s 请求启动 startup ret=%d，当前模式 %s",
+        name.c_str(), ret, robotModeName(mode));
+    if (!commandAccepted(ret)) {
+        return false;
+    }
+    if (!wait_mode({RobotModeType::Running}, true, mode)) {
+        return false;
+    }
+    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+        "[startup] %s 已进入 Running", name.c_str());
+    return true;
+}
+
+
 bool AuboHardwareInterface::OnActive()
 {
     if (!connectRpcClient()) {
         return false;
     }
     if (!connectRtdeClient()) {
+        return false;
+    }
+
+    // 对齐 dual：激活前先解除防护停止，再自动上电到 Running
+    if (!clearProtectiveStopIfNeeded()) {
+        RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+            "protective stop unlock failed before power-on");
+        return false;
+    }
+    if (!ensureRobotRunning()) {
+        RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+            "自动上电/启动失败，机械臂未进入 Running。");
+        return false;
+    }
+    if (!clearProtectiveStopIfNeeded()) {
+        RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+            "protective stop unlock failed before servo-ready");
         return false;
     }
 
