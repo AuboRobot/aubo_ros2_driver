@@ -12,30 +12,26 @@ endif()
 
 set(ENV{CPM_SOURCE_CACHE} $ENV{HOME}/.cache/CPM)
 
-# 下载 aubo_sdk 发布包(二进制方式引入)
-    if(NOT aubo_sdk_POPULATED)
-        include(FetchContent)
-		if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-			# 使用 ARM64 版本 SDK 的 URL
-      message("${PROJECT_NAME}: current system processor type: selecting 'aarch64'.")
-			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_aarch64+b7ed04d.zip")
-		else()
-			# 使用 x86_64 版本 SDK 的 URL
-      message("${PROJECT_NAME}: current system processor type: selecting 'x86'.")
-			# set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.22.1-Linux_x86_64+2ed0c14.zip")
-			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_x86_64+b7ed04d.zip")
-		endif()
-		
-        FetchContent_Declare(
-            aubo_sdk
-			URL ${SDK_URL}
-        )
-        FetchContent_Populate(aubo_sdk)
-    endif()
+# aubo_sdk: prefer AUBO_SDK_ROOT (pre-extracted), else FetchContent zip
+if(DEFINED ENV{AUBO_SDK_ROOT} AND EXISTS "$ENV{AUBO_SDK_ROOT}/lib/cmake/aubo_sdk")
+  set(aubo_sdk_SOURCE_DIR "$ENV{AUBO_SDK_ROOT}")
+  set(aubo_sdk_POPULATED TRUE)
+  message(STATUS "${PROJECT_NAME}: using AUBO_SDK_ROOT=${aubo_sdk_SOURCE_DIR}")
+elseif(NOT aubo_sdk_POPULATED)
+  include(FetchContent)
+  if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    message(STATUS "${PROJECT_NAME}: FetchContent aubo_sdk aarch64")
+    set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_aarch64+b7ed04d.zip")
+  else()
+    message(STATUS "${PROJECT_NAME}: FetchContent aubo_sdk x86_64")
+    set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_x86_64+b7ed04d.zip")
+  endif()
+  FetchContent_Declare(aubo_sdk URL ${SDK_URL})
+  FetchContent_Populate(aubo_sdk)
+endif()
 set(aubo_sdk_DIR ${aubo_sdk_SOURCE_DIR}/lib/cmake/aubo_sdk)
-message("aubo_sdk_DIR" ${aubo_sdk_SOURCE_DIR}/lib/cmake/aubo_sdk)
-
-message("aubo_sdk_SOURCE_DIR ${aubo_sdk_SOURCE_DIR}")
+message(STATUS "aubo_sdk_DIR=${aubo_sdk_DIR}")
+message(STATUS "aubo_sdk_SOURCE_DIR=${aubo_sdk_SOURCE_DIR}")
 
 find_package(aubo_sdk REQUIRED)
 find_package(ament_cmake REQUIRED)

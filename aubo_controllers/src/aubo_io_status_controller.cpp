@@ -383,7 +383,7 @@ private:
             std::llround(stateValue("io_control/get_handle_status")));
         io_msg.handle_device_state = static_cast<std::int32_t>(
             std::lround(stateValue("io_control/get_handle_state")));
-        io_rt_->try_publish(io_msg);
+        io_rt_->tryPublish(io_msg);
 
         auto &robot_manage_msg = manage_msg_;
         robot_manage_msg.stamp = time;
@@ -393,7 +393,7 @@ private:
                         "robot_manage/get_handguide_free_axis");
         appendDoubleStates(robot_manage_msg.handguide_feature,
                            "robot_manage/get_handguide_feature");
-        manage_rt_->try_publish(robot_manage_msg);
+        manage_rt_->tryPublish(robot_manage_msg);
 
         auto &robot_config_msg = config_msg_;
         robot_config_msg.stamp = time;
@@ -407,7 +407,7 @@ private:
             stateValue("robot_config/get_payload_cog_1");
         robot_config_msg.payload_cog.z =
             stateValue("robot_config/get_payload_cog_2");
-        config_rt_->try_publish(robot_config_msg);
+        config_rt_->tryPublish(robot_config_msg);
     }
 
     template <typename MessageVector>
