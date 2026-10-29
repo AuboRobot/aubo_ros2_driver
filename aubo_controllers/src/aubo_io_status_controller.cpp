@@ -10,6 +10,7 @@
 
 #include "controller_interface/controller_interface.hpp"
 #include "rclcpp_lifecycle/lifecycle_publisher.hpp"
+#include "realtime_tools/realtime_publisher.hpp"
 
 #include <aubo_msgs/msg/io_control_state.hpp>
 #include <aubo_msgs/msg/robot_config_state.hpp>
@@ -60,6 +61,9 @@ public:
             get_node()->create_publisher<aubo_msgs::msg::RobotConfigState>(
                 "/robot_config/state", rclcpp::QoS(10));
 
+        io_rt_ = std::make_unique<realtime_tools::RealtimePublisher<aubo_msgs::msg::IoControlState>>(io_control_state_publisher_);
+        manage_rt_ = std::make_unique<realtime_tools::RealtimePublisher<aubo_msgs::msg::RobotManageState>>(robot_manage_state_publisher_);
+        config_rt_ = std::make_unique<realtime_tools::RealtimePublisher<aubo_msgs::msg::RobotConfigState>>(robot_config_state_publisher_);
         setupServices();
         return controller_interface::CallbackReturn::SUCCESS;
     }
@@ -72,6 +76,8 @@ public:
         io_control_state_publisher_->on_activate();
         robot_manage_state_publisher_->on_activate();
         robot_config_state_publisher_->on_activate();
+        // Warm variable-sized message storage before entering the cyclic loop.
+        publishStates(get_node()->now());
         return controller_interface::CallbackReturn::SUCCESS;
     }
 
@@ -334,7 +340,7 @@ private:
 
     void publishStates(const rclcpp::Time &time)
     {
-        aubo_msgs::msg::IoControlState io_msg;
+        auto &io_msg = io_msg_;
         io_msg.stamp = time;
         appendBoolStates(io_msg.standard_digital_inputs,
                          "io_control/get_standard_digital_input");
@@ -377,9 +383,9 @@ private:
             std::llround(stateValue("io_control/get_handle_status")));
         io_msg.handle_device_state = static_cast<std::int32_t>(
             std::lround(stateValue("io_control/get_handle_state")));
-        io_control_state_publisher_->publish(io_msg);
+        io_rt_->try_publish(io_msg);
 
-        aubo_msgs::msg::RobotManageState robot_manage_msg;
+        auto &robot_manage_msg = manage_msg_;
         robot_manage_msg.stamp = time;
         robot_manage_msg.handguide_enabled =
             stateValue("robot_manage/get_handguide_enabled") != 0.0;
@@ -387,9 +393,9 @@ private:
                         "robot_manage/get_handguide_free_axis");
         appendDoubleStates(robot_manage_msg.handguide_feature,
                            "robot_manage/get_handguide_feature");
-        robot_manage_state_publisher_->publish(robot_manage_msg);
+        manage_rt_->try_publish(robot_manage_msg);
 
-        aubo_msgs::msg::RobotConfigState robot_config_msg;
+        auto &robot_config_msg = config_msg_;
         robot_config_msg.stamp = time;
         appendDoubleStates(robot_config_msg.tcp_offset,
                            "robot_config/get_tcp_offset");
@@ -401,7 +407,7 @@ private:
             stateValue("robot_config/get_payload_cog_1");
         robot_config_msg.payload_cog.z =
             stateValue("robot_config/get_payload_cog_2");
-        robot_config_state_publisher_->publish(robot_config_msg);
+        config_rt_->try_publish(robot_config_msg);
     }
 
     template <typename MessageVector>
@@ -503,6 +509,13 @@ private:
     std::unordered_map<std::string, std::size_t> state_interface_index_;
     std::unordered_map<std::string, std::size_t> command_interface_index_;
     double command_trigger_{ 0.0 };
+    aubo_msgs::msg::IoControlState io_msg_;
+    aubo_msgs::msg::RobotManageState manage_msg_;
+    aubo_msgs::msg::RobotConfigState config_msg_;
+    std::unique_ptr<realtime_tools::RealtimePublisher<aubo_msgs::msg::IoControlState>> io_rt_;
+    std::unique_ptr<realtime_tools::RealtimePublisher<aubo_msgs::msg::RobotManageState>> manage_rt_;
+    std::unique_ptr<realtime_tools::RealtimePublisher<aubo_msgs::msg::RobotConfigState>> config_rt_;
+
 
     rclcpp_lifecycle::LifecyclePublisher<
         aubo_msgs::msg::IoControlState>::SharedPtr io_control_state_publisher_;

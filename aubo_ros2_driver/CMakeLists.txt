@@ -39,6 +39,7 @@ message("aubo_sdk_SOURCE_DIR ${aubo_sdk_SOURCE_DIR}")
 
 find_package(aubo_sdk REQUIRED)
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 find_package(controller_manager REQUIRED)
 find_package(controller_manager_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -170,7 +171,9 @@ ament_export_libraries(
 install(DIRECTORY include/
   DESTINATION include
 )
-install(PROGRAMS ${aubo_sdk_SOURCE_DIR}/lib/libaubo_sdkd.so
+install(FILES
+  ${aubo_sdk_SOURCE_DIR}/lib/libaubo_sdk.so
+  ${aubo_sdk_SOURCE_DIR}/lib/libaubo_sdkd.so
   DESTINATION lib
 )
 ament_export_dependencies(
@@ -188,5 +191,13 @@ ament_python_install_package(${PROJECT_NAME})
 #install(DIRECTORY config launch
 #  DESTINATION share/${PROJECT_NAME}
 #)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test_control_profile COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_control_profile.py)
+  ament_add_gtest(test_servo_return_policy test/test_servo_return_policy.cpp)
+  target_include_directories(test_servo_return_policy PRIVATE include)
+endif()
 
 ament_package()
