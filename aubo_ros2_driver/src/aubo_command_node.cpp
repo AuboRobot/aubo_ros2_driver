@@ -12,6 +12,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -30,6 +31,76 @@ using aubo_msgs::msg::AuboCommandStatus;
 using aubo_msgs::msg::AuboJointMove;
 using aubo_msgs::msg::AuboLinearMove;
 using aubo_msgs::msg::AuboPowerCommand;
+using arcs::common_interface::RobotModeType;
+using arcs::common_interface::SafetyModeType;
+
+const char * robotModeName(RobotModeType mode)
+{
+  switch (mode) {
+    case RobotModeType::NoController: return "NoController";
+    case RobotModeType::Disconnected: return "Disconnected";
+    case RobotModeType::ConfirmSafety: return "ConfirmSafety";
+    case RobotModeType::Booting: return "Booting";
+    case RobotModeType::PowerOff: return "PowerOff";
+    case RobotModeType::PowerOn: return "PowerOn";
+    case RobotModeType::Idle: return "Idle";
+    case RobotModeType::BrakeReleasing: return "BrakeReleasing";
+    case RobotModeType::BackDrive: return "BackDrive";
+    case RobotModeType::Running: return "Running";
+    case RobotModeType::Maintaince: return "Maintaince";
+    case RobotModeType::Error: return "Error";
+    case RobotModeType::PowerOffing: return "PowerOffing";
+  }
+  return "Unknown";
+}
+
+const char * safetyModeName(SafetyModeType mode)
+{
+  switch (mode) {
+    case SafetyModeType::Undefined: return "Undefined";
+    case SafetyModeType::Normal: return "Normal";
+    case SafetyModeType::ReducedMode: return "ReducedMode";
+    case SafetyModeType::Recovery: return "Recovery";
+    case SafetyModeType::Violation: return "Violation";
+    case SafetyModeType::ProtectiveStop: return "ProtectiveStop";
+    case SafetyModeType::SafeguardStop: return "SafeguardStop";
+    case SafetyModeType::SystemEmergencyStop: return "SystemEmergencyStop";
+    case SafetyModeType::RobotEmergencyStop: return "RobotEmergencyStop";
+    case SafetyModeType::Fault: return "Fault";
+  }
+  return "Unknown";
+}
+
+bool isAbortRobotMode(RobotModeType mode)
+{
+  return mode == RobotModeType::NoController ||
+         mode == RobotModeType::Disconnected ||
+         mode == RobotModeType::ConfirmSafety ||
+         mode == RobotModeType::Maintaince ||
+         mode == RobotModeType::Error;
+}
+
+bool isFatalSafetyMode(SafetyModeType mode)
+{
+  return mode == SafetyModeType::Fault ||
+         mode == SafetyModeType::RobotEmergencyStop ||
+         mode == SafetyModeType::SystemEmergencyStop;
+}
+
+bool isPowerProgressMode(RobotModeType mode)
+{
+  return mode == RobotModeType::Booting ||
+         mode == RobotModeType::PowerOn ||
+         mode == RobotModeType::Idle ||
+         mode == RobotModeType::BrakeReleasing ||
+         mode == RobotModeType::BackDrive ||
+         mode == RobotModeType::Running;
+}
+
+bool commandAccepted(int ret)
+{
+  return ret == 0 || ret == AUBO_BUSY;
+}
 
 bool isFinitePositive(const double value)
 {
@@ -311,34 +382,182 @@ private:
   {
     auto manage = robot_interface_->getRobotManage();
     auto state = robot_interface_->getRobotState();
-    if (command.power_on) {
-      auto mode = state->getRobotModeType();
-      if (mode == arcs::common_interface::RobotModeType::Running) {
+    if (!manage || !state) {
+      throw std::runtime_error("robot interface is unavailable");
+    }
+    if (!command.power_on) {
+      if (state->getRobotModeType() == RobotModeType::PowerOff) {
         return;
       }
-      if (mode != arcs::common_interface::RobotModeType::Idle) {
-        if (manage->poweron() != 0 ||
-          !waitForMode(arcs::common_interface::RobotModeType::Idle, mode_timeout_))
-        {
-          throw std::runtime_error("robot did not reach Idle mode after power-on request");
-        }
-      }
-      if (manage->startup() != 0 ||
-        !waitForMode(arcs::common_interface::RobotModeType::Running, mode_timeout_))
+      if (manage->poweroff() != 0 ||
+        !waitForMode(RobotModeType::PowerOff, mode_timeout_))
       {
-        throw std::runtime_error("robot did not reach Running mode after startup request");
+        throw std::runtime_error("robot did not reach PowerOff mode after power-off request");
       }
       return;
     }
 
-    if (state->getRobotModeType() == arcs::common_interface::RobotModeType::PowerOff) {
+    // Power on only from PowerOff, wait out PowerOffing / brake release, then startup.
+    const auto deadline = std::chrono::steady_clock::now() + mode_timeout_;
+    constexpr auto kPoll = 200ms;
+    const auto & name = robot_name_;
+
+    auto read_state = [&](RobotModeType & mode, SafetyModeType & safety) -> bool {
+        try {
+          mode = state->getRobotModeType();
+          safety = state->getSafetyModeType();
+          return true;
+        } catch (const std::exception & error) {
+          RCLCPP_WARN(
+            get_logger(), "[startup] %s 读取模式失败: %s", name.c_str(), error.what());
+          return false;
+        }
+      };
+
+    auto wait_mode = [&](std::initializer_list<RobotModeType> targets,
+                         bool abort_on_power_off_regression,
+                         RobotModeType & mode) -> bool {
+        bool seen_progress = isPowerProgressMode(mode);
+        RobotModeType last_logged = mode;
+        while (std::chrono::steady_clock::now() < deadline) {
+          SafetyModeType safety = SafetyModeType::Undefined;
+          if (!read_state(mode, safety)) {
+            std::this_thread::sleep_for(kPoll);
+            continue;
+          }
+          if (mode != last_logged) {
+            RCLCPP_INFO(
+              get_logger(), "[startup] %s 模式 %s，安全状态 %s",
+              name.c_str(), robotModeName(mode), safetyModeName(safety));
+            last_logged = mode;
+          }
+          for (const auto target : targets) {
+            if (mode == target) {
+              return true;
+            }
+          }
+          if (isAbortRobotMode(mode) || isFatalSafetyMode(safety)) {
+            RCLCPP_ERROR(
+              get_logger(), "[startup] %s 上电中止，模式 %s，安全状态 %s",
+              name.c_str(), robotModeName(mode), safetyModeName(safety));
+            return false;
+          }
+          if (abort_on_power_off_regression && seen_progress &&
+            mode == RobotModeType::PowerOff)
+          {
+            RCLCPP_ERROR(
+              get_logger(), "[startup] %s 上电回退到 PowerOff，安全状态 %s",
+              name.c_str(), safetyModeName(safety));
+            return false;
+          }
+          if (isPowerProgressMode(mode)) {
+            seen_progress = true;
+          }
+          std::this_thread::sleep_for(kPoll);
+        }
+        RCLCPP_ERROR(
+          get_logger(), "[startup] %s 等待模式超时，当前 %s",
+          name.c_str(), robotModeName(mode));
+        return false;
+      };
+
+    RobotModeType mode = RobotModeType::NoController;
+    SafetyModeType safety = SafetyModeType::Undefined;
+    if (!read_state(mode, safety)) {
+      throw std::runtime_error("failed to read robot mode before power-on");
+    }
+    RCLCPP_INFO(
+      get_logger(), "[startup] %s 当前模式 %s，安全状态 %s",
+      name.c_str(), robotModeName(mode), safetyModeName(safety));
+
+    if (mode == RobotModeType::Running) {
+      RCLCPP_INFO(get_logger(), "[startup] %s 已处于 Running，跳过上电与启动", name.c_str());
       return;
     }
-    if (manage->poweroff() != 0 ||
-      !waitForMode(arcs::common_interface::RobotModeType::PowerOff, mode_timeout_))
-    {
-      throw std::runtime_error("robot did not reach PowerOff mode after power-off request");
+    if (isAbortRobotMode(mode) || isFatalSafetyMode(safety)) {
+      throw std::runtime_error(
+              std::string("cannot power on from mode ") + robotModeName(mode) +
+              " safety " + safetyModeName(safety));
     }
+
+    if (mode == RobotModeType::PowerOffing) {
+      if (!wait_mode(
+          {RobotModeType::PowerOff, RobotModeType::Idle, RobotModeType::Running},
+          false, mode))
+      {
+        throw std::runtime_error("timed out waiting for power-off to finish");
+      }
+      if (mode == RobotModeType::Running) {
+        return;
+      }
+    }
+
+    if (mode == RobotModeType::PowerOff) {
+      int ret = -1;
+      try {
+        ret = manage->poweron();
+      } catch (const std::exception & error) {
+        RCLCPP_ERROR(
+          get_logger(), "[startup] %s poweron 异常: %s", name.c_str(), error.what());
+        throw std::runtime_error(std::string("poweron failed: ") + error.what());
+      }
+      RCLCPP_INFO(get_logger(), "[startup] %s 请求上电 poweron ret=%d", name.c_str(), ret);
+      if (!commandAccepted(ret)) {
+        throw std::runtime_error("poweron was rejected, ret=" + std::to_string(ret));
+      }
+      if (!wait_mode({RobotModeType::Idle, RobotModeType::Running}, true, mode)) {
+        throw std::runtime_error("robot did not reach Idle or Running after power-on request");
+      }
+    } else if (mode == RobotModeType::BrakeReleasing) {
+      RCLCPP_INFO(get_logger(), "[startup] %s 刹车松开中，跳过 poweron", name.c_str());
+      if (!wait_mode({RobotModeType::Running}, true, mode)) {
+        throw std::runtime_error("robot did not reach Running while brakes were releasing");
+      }
+    } else {
+      RCLCPP_INFO(
+        get_logger(), "[startup] %s 已上电（模式 %s），跳过 poweron",
+        name.c_str(), robotModeName(mode));
+      if (mode != RobotModeType::Idle && mode != RobotModeType::BackDrive &&
+        mode != RobotModeType::Running)
+      {
+        if (!wait_mode(
+            {RobotModeType::Idle, RobotModeType::Running,
+              RobotModeType::BackDrive, RobotModeType::BrakeReleasing},
+            true, mode))
+        {
+          throw std::runtime_error("robot did not become ready to start");
+        }
+      }
+    }
+
+    if (mode == RobotModeType::Running) {
+      return;
+    }
+    if (mode == RobotModeType::BrakeReleasing) {
+      if (!wait_mode({RobotModeType::Running}, true, mode)) {
+        throw std::runtime_error("robot did not reach Running while brakes were releasing");
+      }
+      return;
+    }
+
+    int ret = -1;
+    try {
+      ret = manage->startup();
+    } catch (const std::exception & error) {
+      RCLCPP_ERROR(
+        get_logger(), "[startup] %s startup 异常: %s", name.c_str(), error.what());
+      throw std::runtime_error(std::string("startup failed: ") + error.what());
+    }
+    RCLCPP_INFO(
+      get_logger(), "[startup] %s 请求启动 startup ret=%d，当前模式 %s",
+      name.c_str(), ret, robotModeName(mode));
+    if (!commandAccepted(ret)) {
+      throw std::runtime_error("startup was rejected, ret=" + std::to_string(ret));
+    }
+    if (!wait_mode({RobotModeType::Running}, true, mode)) {
+      throw std::runtime_error("robot did not reach Running mode after startup request");
+    }
+    RCLCPP_INFO(get_logger(), "[startup] %s 已进入 Running", name.c_str());
   }
 
   void ensureRobotRunning() const

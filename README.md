@@ -454,7 +454,7 @@ ros2 launch aubo_ros2_driver aubo_command.launch.py robot_ip:=192.168.127.128
 
 ### 上下电
 
-上电命令会请求机械臂上电并启动（松刹车），等待进入 Running 模式：
+上电命令按当前模式处理，等待上限为 `mode_timeout_seconds`：已经 Running 则跳过；正在下电则先等到 PowerOff、Idle 或 Running；只有 PowerOff 才调用 `poweron`（返回码 0 或 `AUBO_BUSY` 都算接受）；刹车松开中则等待 Running；其余已上电状态跳过 `poweron`，需要时再 `startup` 直到 Running。无控制器、急停或故障会直接失败：
 
 ```bash
 ros2 topic pub --once /aubo/power_command aubo_msgs/msg/AuboPowerCommand \
