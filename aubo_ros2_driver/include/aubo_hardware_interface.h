@@ -121,8 +121,8 @@ private:
 
     std::array<double, 6> aubo_position_commands_{};
     std::array<double, 6> aubo_velocity_commands_{};
-    double speed_scaling_combined_;
-    bool controllers_initialized_;
+    double speed_scaling_combined_{ 1.0 };
+    bool controllers_initialized_{ false };
     bool servo_mode_start_{ false };
     bool servo_fault_latched_{ false };
     bool servo_mode_pending_{ false };
@@ -153,8 +153,8 @@ private:
     int line_{ -1 };
     std::vector<double> actual_q_{ std::vector<double>(6, 0) };
     std::vector<double> joint_velocity_{ std::vector<double>(6, 0) };
-    std::array<double, 6> actual_q_copy_;
-    std::array<double, 6> joint_velocity_copy_;
+    std::array<double, 6> actual_q_copy_{};
+    std::array<double, 6> joint_velocity_copy_{};
     std::vector<double> actual_qd_{ std::vector<double>(6, 0) };
     std::vector<double> target_q_{ std::vector<double>(6, 0) };
     std::vector<double> target_qd_{ std::vector<double>(6, 0) };

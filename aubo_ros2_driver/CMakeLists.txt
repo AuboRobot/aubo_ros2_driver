@@ -43,6 +43,7 @@ find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
+find_package(realtime_tools REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
@@ -61,6 +62,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   pluginlib
   rclcpp
   rclcpp_lifecycle
+  realtime_tools
   std_msgs
   std_srvs
   tf2_geometry_msgs
@@ -104,7 +106,8 @@ add_executable(aubo_ros2_control_node
 
 ament_target_dependencies(aubo_ros2_control_node 
     controller_manager 
-    rclcpp)
+    rclcpp
+    realtime_tools)
 
 add_executable(aubo_command_node
   src/aubo_command_node.cpp
@@ -201,6 +204,7 @@ ament_export_dependencies(
   pluginlib
   rclcpp
   rclcpp_lifecycle
+  realtime_tools
   ${THIS_PACKAGE_INCLUDE_DEPENDS}
 )
 install(DIRECTORY config launch

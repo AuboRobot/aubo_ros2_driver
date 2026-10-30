@@ -86,7 +86,7 @@ sudo apt install \
 - MoveIt 控制器管理器参数补齐，支持 `joint_trajectory_controller` 执行。
 - `joint_limits.yaml` 补充加速度限制，修复 `AddTimeOptimalParameterization` 失败问题。
 - `SRDF` 虚拟关节修正为 `world -> base_link`。
-- RViz `Planning Scene Topic` 修正为 `/monitored_planning_scene`，使 MotionPlanning 场景机器人状态可正常刷新。
+- RViz `Planning Scene Topic` 使用 `move_group/monitored_planning_scene`，与 `aubo_moveit.launch.py` 中的 planning scene monitor 一致。
 
 说明：
 

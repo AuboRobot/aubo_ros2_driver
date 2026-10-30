@@ -7,7 +7,7 @@
 // ROS includes
 #include "controller_manager/controller_manager.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "realtime_tools/thread_priority.hpp"
+#include "realtime_tools/realtime_helpers.hpp"
 
 namespace {
 std::string rtprio_failure_hint()
