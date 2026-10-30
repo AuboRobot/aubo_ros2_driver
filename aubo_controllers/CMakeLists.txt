@@ -11,6 +11,7 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(realtime_tools REQUIRED)
 
 add_compile_options(-Wall)
 add_compile_options(-Wextra)
@@ -29,6 +30,7 @@ ament_target_dependencies(aubo_controller_plugin
   rclcpp
   rclcpp_lifecycle
   std_msgs
+  realtime_tools
 )
 
 pluginlib_export_plugin_description_file(controller_interface aubo_controller_plugin.xml)
@@ -47,6 +49,7 @@ ament_export_dependencies(
   rclcpp
   rclcpp_lifecycle
   std_msgs
+  realtime_tools
 )
 
 ament_package()

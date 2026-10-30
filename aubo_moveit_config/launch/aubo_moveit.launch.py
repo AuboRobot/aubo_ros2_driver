@@ -31,9 +31,16 @@ def launch_setup(context, *args, **kwargs):
     support_package = LaunchConfiguration("support_package")
     moveit_config_package = LaunchConfiguration("moveit_config_package")
     moveit_config_file = LaunchConfiguration("moveit_config_file")
-    aubo_type = LaunchConfiguration("aubo_type")
+    aubo_type = LaunchConfiguration("aubo_type").perform(context)
+    use_calibrated = LaunchConfiguration("use_calibrated").perform(context).lower()
+    if use_calibrated not in ("true", "false"):
+        raise ValueError("use_calibrated must be true or false")
+    if use_calibrated == "true":
+        aubo_type += "_calibrated"
 
     # Planning context
+    # Keep Humble's in-launch OMPL string parameters (see ompl_planning_pipeline_config
+    # below). Do not switch this file to Jazzy MoveItConfigsBuilder.
     robot_description_content = Command(
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
@@ -43,7 +50,7 @@ def launch_setup(context, *args, **kwargs):
             ),
             " ",
             "aubo_type:=",
-             aubo_type,
+            aubo_type,
             " ",
         ]
     )
@@ -221,6 +228,20 @@ def generate_launch_description():
             description="Name of the SRDF file",
             default_value="aubo_robot.srdf",
             choices=["aubo_robot.srdf"],
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "aubo_type",
+            default_value="aubo_i5",
+            description="Robot model passed to the description xacro.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "use_calibrated",
+            default_value="false",
+            description="Append _calibrated to aubo_type; fail closed if the model is missing.",
         )
     )
 

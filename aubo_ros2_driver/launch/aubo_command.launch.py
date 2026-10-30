@@ -2,6 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -27,8 +28,12 @@ def generate_launch_description():
                     {
                         "robot_ip": LaunchConfiguration("robot_ip"),
                         "robot_port": LaunchConfiguration("robot_port"),
-                        "username": LaunchConfiguration("username"),
-                        "password": LaunchConfiguration("password"),
+                        "username": ParameterValue(
+                            LaunchConfiguration("username"), value_type=str
+                        ),
+                        "password": ParameterValue(
+                            LaunchConfiguration("password"), value_type=str
+                        ),
                         "robot_name": LaunchConfiguration("robot_name"),
                         "base_frame": LaunchConfiguration("base_frame"),
                         "mode_timeout_seconds": LaunchConfiguration(

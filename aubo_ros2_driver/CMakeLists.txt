@@ -12,33 +12,30 @@ endif()
 
 set(ENV{CPM_SOURCE_CACHE} $ENV{HOME}/.cache/CPM)
 
-# 下载 aubo_sdk 发布包(二进制方式引入)
-    if(NOT aubo_sdk_POPULATED)
-        include(FetchContent)
-		if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-			# 使用 ARM64 版本 SDK 的 URL
-      message("${PROJECT_NAME}: current system processor type: selecting 'aarch64'.")
-			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_aarch64+b7ed04d.zip")
-		else()
-			# 使用 x86_64 版本 SDK 的 URL
-      message("${PROJECT_NAME}: current system processor type: selecting 'x86'.")
-			# set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.22.1-Linux_x86_64+2ed0c14.zip")
-			set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_x86_64+b7ed04d.zip")
-		endif()
-		
-        FetchContent_Declare(
-            aubo_sdk
-			URL ${SDK_URL}
-        )
-        FetchContent_Populate(aubo_sdk)
-    endif()
+# aubo_sdk: prefer AUBO_SDK_ROOT (pre-extracted), else FetchContent zip
+if(DEFINED ENV{AUBO_SDK_ROOT} AND EXISTS "$ENV{AUBO_SDK_ROOT}/lib/cmake/aubo_sdk")
+  set(aubo_sdk_SOURCE_DIR "$ENV{AUBO_SDK_ROOT}")
+  set(aubo_sdk_POPULATED TRUE)
+  message(STATUS "${PROJECT_NAME}: using AUBO_SDK_ROOT=${aubo_sdk_SOURCE_DIR}")
+elseif(NOT aubo_sdk_POPULATED)
+  include(FetchContent)
+  if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    message(STATUS "${PROJECT_NAME}: FetchContent aubo_sdk aarch64")
+    set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_aarch64+b7ed04d.zip")
+  else()
+    message(STATUS "${PROJECT_NAME}: FetchContent aubo_sdk x86_64")
+    set(SDK_URL "https://download.aubo-robotics.cn/sdk/aubo_sdk-0.27.0-rc.4-Linux_x86_64+b7ed04d.zip")
+  endif()
+  FetchContent_Declare(aubo_sdk URL ${SDK_URL})
+  FetchContent_Populate(aubo_sdk)
+endif()
 set(aubo_sdk_DIR ${aubo_sdk_SOURCE_DIR}/lib/cmake/aubo_sdk)
-message("aubo_sdk_DIR" ${aubo_sdk_SOURCE_DIR}/lib/cmake/aubo_sdk)
-
-message("aubo_sdk_SOURCE_DIR ${aubo_sdk_SOURCE_DIR}")
+message(STATUS "aubo_sdk_DIR=${aubo_sdk_DIR}")
+message(STATUS "aubo_sdk_SOURCE_DIR=${aubo_sdk_SOURCE_DIR}")
 
 find_package(aubo_sdk REQUIRED)
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 find_package(controller_manager REQUIRED)
 find_package(controller_manager_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -46,6 +43,7 @@ find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
+find_package(realtime_tools REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
@@ -64,6 +62,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   pluginlib
   rclcpp
   rclcpp_lifecycle
+  realtime_tools
   std_msgs
   std_srvs
   tf2_geometry_msgs
@@ -107,7 +106,8 @@ add_executable(aubo_ros2_control_node
 
 ament_target_dependencies(aubo_ros2_control_node 
     controller_manager 
-    rclcpp)
+    rclcpp
+    realtime_tools)
 
 add_executable(aubo_command_node
   src/aubo_command_node.cpp
@@ -118,6 +118,9 @@ ament_target_dependencies(aubo_command_node
   geometry_msgs
   rclcpp
 )
+# The SDK bundles an older libstdc++; prefer the compiler's runtime for ROS.
+set_target_properties(aubo_robot_driver_plugin aubo_command_node PROPERTIES
+  BUILD_RPATH "${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}")
 add_executable(robot_state_helper
   src/robot_state_helper.cpp
   src/robot_state_helper_node.cpp
@@ -153,6 +156,30 @@ target_include_directories(
 )
 
 pluginlib_export_plugin_description_file(hardware_interface hardware_interface_plugin.xml)
+
+# rebuild / symlink-install 会清掉 file capabilities；用 ALL 目标每次编译补回 FIFO caps。
+# 无免密 sudo 时脚本 WARN 并以 0 退出，不阻断 colcon。
+add_custom_target(apply_aubo_rt_caps ALL
+  COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/apply_aubo_rt_caps.sh"
+          "$<TARGET_FILE:aubo_ros2_control_node>"
+  DEPENDS aubo_ros2_control_node
+  COMMENT "Applying RT file capabilities to aubo_ros2_control_node"
+  VERBATIM
+)
+install(PROGRAMS
+  scripts/apply_aubo_rt_caps.sh
+  scripts/configure_aubo_realtime.sh
+  scripts/check_aubo_rt.sh
+  scripts/aubo_setcap_rt_wrapper.sh
+  scripts/switch_mode.sh
+  DESTINATION lib/${PROJECT_NAME}
+)
+install(CODE "
+  execute_process(
+    COMMAND bash \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/apply_aubo_rt_caps.sh\"
+            \"\${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/aubo_ros2_control_node\"
+  )
+")
 install(
   TARGETS aubo_ros2_control_node aubo_command_node robot_state_helper controller_stopper dashboard_client
   DESTINATION lib/${PROJECT_NAME}
@@ -170,7 +197,9 @@ ament_export_libraries(
 install(DIRECTORY include/
   DESTINATION include
 )
-install(PROGRAMS ${aubo_sdk_SOURCE_DIR}/lib/libaubo_sdkd.so
+install(FILES
+  ${aubo_sdk_SOURCE_DIR}/lib/libaubo_sdk.so
+  ${aubo_sdk_SOURCE_DIR}/lib/libaubo_sdkd.so
   DESTINATION lib
 )
 ament_export_dependencies(
@@ -178,6 +207,7 @@ ament_export_dependencies(
   pluginlib
   rclcpp
   rclcpp_lifecycle
+  realtime_tools
   ${THIS_PACKAGE_INCLUDE_DEPENDS}
 )
 install(DIRECTORY config launch
@@ -188,5 +218,13 @@ ament_python_install_package(${PROJECT_NAME})
 #install(DIRECTORY config launch
 #  DESTINATION share/${PROJECT_NAME}
 #)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test_control_profile COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_control_profile.py)
+  ament_add_gtest(test_servo_return_policy test/test_servo_return_policy.cpp)
+  target_include_directories(test_servo_return_policy PRIVATE include)
+endif()
 
 ament_package()
