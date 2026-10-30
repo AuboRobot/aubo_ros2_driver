@@ -2,14 +2,7 @@
 
 ## 依据与适配
 
-参考工作区 `learn/aubo_dual_ros2_driver`：
-
-- `notebook/s100_servo_optimization_20261010.md`：故障锁存、显式恢复、残留模式清理；有线待机和残留模式清理已有现场验证，完整轨迹仍需验证。
-- `notebook/s100_servo_log_review_20261009.md`：同步 RPC 长尾与逐调用诊断。
-- `notebook/s100_moveit_execute_timeout_servoj_t.md`：增大 t=.02 曾造成轨迹跟踪超时。
-- `src/aubo_dual_hardware/src/aubo_dual_hardware_interface.cpp`：单次发送、steady clock 时间预算、禁止自动补模式。
-
-适配当前 SDK 的 `setServoModeSelect` API；保留本项目 200Hz、t=.01、gain/lookahead/a/v 和 JTC 容差。learn 最终采用过 100Hz 与 t=.01 对齐，但不同平台的频率结论不直接当成 ES3 验证结果。本次不改变轨迹动态参数。
+适配当前 SDK 的 `setServoModeSelect` API；保留本项目 200Hz、t=.01、gain/lookahead/a/v 和 JTC 容差。不同平台的频率结论不直接当成 ES3 验证结果。本次不改变轨迹动态参数。增大 t 到 .02 曾造成轨迹跟踪超时。
 
 ## 已迁移
 
@@ -28,7 +21,7 @@
 
 ```bash
 cd ~/workspace
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 colcon build --packages-select aubo_description aubo_ros2_driver \
   --cmake-args -DBUILD_TESTING=ON -DAMENT_CMAKE_SYMLINK_INSTALL=OFF
 colcon test --packages-select aubo_ros2_driver --ctest-args -R test_servo_return_policy

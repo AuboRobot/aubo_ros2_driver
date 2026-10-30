@@ -13,7 +13,7 @@
 | Package version | 2.3.2 |
 | SDK | `aubo_sdk-0.27.0-rc.4` (`Linux_x86_64+b7ed04d` on 3060) |
 
-Port work: branch **`humble-port`**. No secrets in this tree. Dual-arm `learn/` not synced.
+Port work: branch **`humble-port`**. No secrets in this tree.
 
 ## Layout on aubo-3060
 
@@ -46,6 +46,8 @@ Repo root is a multi-package colcon tree; symlinking the whole repo into `ws_hum
 
 5. **`aubo_description/CMakeLists.txt`** — bumped `cmake_minimum_required` 2.8.3 → 3.8 (silence deprecation).
 
+6. **`ompl_planning.yaml`** — Humble MoveIt 2.5 expects `planning_plugin` and `request_adapters` as strings, with plugin ids `default_planner_request_adapters/*`. The Jazzy string-array form (`planning_plugins`, `request_adapters`, `response_adapters`, `default_planning_*`) aborts `move_group` (`expected [string] got [string_array]`).
+
 ## Build (verified 2026-10-29 Asia/Shanghai)
 
 ```bash
@@ -64,8 +66,3 @@ All 8 packages: `aubo_msgs`, `aubo_dashboard_msgs`, `aubo_description`, `aubo_co
 - Upstream has no `humble` branch; this is a local port from AGX Jazzy dirty tree.
 - Gazebo classic packages (`ros-humble-gazebo-ros`, `gazebo-ros2-control`) are available via apt but not required to *build* `aubo_gazebo` (install-only package).
 - Do not push AGX credentials; SDK zip is public download / local cache only.
-
-
-## Dual 对齐（见 DUAL_ALIGN.md）
-
-分支 `dual-align-arcs`：自动上电、防护停止清理、setcap FIFO、remote RViz、`robot_ip` 默认 `127.0.0.1`（ARCS sim-as-real）。

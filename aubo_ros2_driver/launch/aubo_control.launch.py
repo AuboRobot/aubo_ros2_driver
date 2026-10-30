@@ -67,7 +67,7 @@ def launch_setup(context, *args, **kwargs):
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
     remote_viz = LaunchConfiguration("remote_viz")
-    # remote_viz:=true → 不启本机 RViz（对齐 dual 多机）
+    # remote_viz:=true → 不启本机 RViz
     effective_launch_rviz = PythonExpression(
         ["'false' if '", remote_viz, "' == 'true' else '", launch_rviz, "'"]
     )

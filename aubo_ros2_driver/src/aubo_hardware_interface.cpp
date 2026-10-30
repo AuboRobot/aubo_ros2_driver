@@ -620,7 +620,7 @@ bool AuboHardwareInterface::OnActive()
         return false;
     }
 
-    // 对齐 dual：激活前先解除防护停止，再自动上电到 Running
+    // 激活前先解除防护停止，再自动上电到 Running
     if (!clearProtectiveStopIfNeeded()) {
         RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
             "protective stop unlock failed before power-on");

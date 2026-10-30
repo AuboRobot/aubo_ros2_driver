@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 单臂模式切换辅助（对齐 dual aubo_mode_manager 语义，不引入双臂包）
+# 单臂模式切换辅助
 # 用法: switch_mode.sh SERVO|NORMAL|TEACH|UNLOCK
 set -euo pipefail
 MODE="${1:-}"
@@ -13,7 +13,7 @@ case "${MODE}" in
     echo "示例: ros2 control switch_controllers --deactivate joint_trajectory_controller"
     ;;
   TEACH|2)
-    echo "TEACH: 单臂请用示教器/ARCS freedrive；本仓库未移植 dual /enable_freedrive 服务"
+    echo "TEACH: 请用示教器/ARCS freedrive；本仓库未提供 /enable_freedrive 服务"
     exit 2
     ;;
   UNLOCK)

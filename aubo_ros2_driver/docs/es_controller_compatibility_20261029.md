@@ -10,7 +10,7 @@
 - servo_period显式传给servoJoint，默认保持0.01；control_period随实际选择频率传给硬件接口，用于RPC预算诊断。校验有限正数、servo_period范围及control_period<5*t。50ms保护改为由5*t计算，默认保护强度不变。
 - 在启动前重写临时YAML中controller_manager.ros__parameters.update_rate；实测发现单纯追加Node通配符参数不能覆盖节点专属YAML，现已用实际参数和日志核验。
 - 辅助控制器逐个加载/激活，JTC最后启动。任一前置spawner失败会结束启动，不继续启动运动控制器。保留fake硬件分支对辅助控制器的跳过。
-- IO/RobotManage/RobotConfig三种状态改为RealtimePublisher.try_publish，后台处理DDS发布，发布忙时跳过旧快照。消息复用并在激活时预热容器。服务名称及字段保持原状。
+- IO/RobotManage/RobotConfig三种状态改为RealtimePublisher.tryPublish，后台处理DDS发布，发布忙时跳过旧快照。消息复用并在激活时预热容器。服务名称及字段保持原状。Humble 的 `realtime_tools` 方法名是 `tryPublish`。
 - 保留Servo返回码时间预算、故障锁存、显式恢复、RTDE新鲜度检查、原增益和轨迹容差；本轮没有改变RTDE频率和配置命令执行路径。
 
 ## 测试与证据
@@ -23,7 +23,7 @@
 
 ```bash
 cd ~/workspace
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch aubo_ros2_driver aubo_control.launch.py \
   aubo_type:=aubo_ES3 robot_ip:=192.168.3.100 \

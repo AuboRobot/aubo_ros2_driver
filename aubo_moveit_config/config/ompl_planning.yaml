@@ -1,3 +1,16 @@
+# Humble MoveIt 2.5 expects strings here. Jazzy-style string arrays abort move_group
+# (InvalidParameterTypeException: expected [string] got [string_array]).
+planning_plugin: ompl_interface/OMPLPlanner
+start_state_max_bounds_error: 0.1
+jiggle_fraction: 0.05
+request_adapters: >-
+  default_planner_request_adapters/AddTimeOptimalParameterization
+  default_planner_request_adapters/ResolveConstraintFrames
+  default_planner_request_adapters/FixWorkspaceBounds
+  default_planner_request_adapters/FixStartStateBounds
+  default_planner_request_adapters/FixStartStateCollision
+  default_planner_request_adapters/FixStartStatePathConstraints
+
 planner_configs:
   SBLkConfigDefault:
     type: geometric::SBL

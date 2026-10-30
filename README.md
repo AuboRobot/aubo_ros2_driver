@@ -2,24 +2,24 @@
 
 遨博机器人ROS2驱动
 
-## 安装与编译（Ubuntu 24.04 / ROS 2 Jazzy）
+## 安装与编译（Ubuntu 22.04 / ROS 2 Humble）
 
-在工作区根目录执行；本机为 ARM64（aarch64）。模型由 Git 子模块提供，首次克隆后必须初始化：
+在工作区根目录执行。模型由 Git 子模块提供，首次克隆后必须初始化：
 
 ```bash
 cd ~/workspace
 git -C src/aubo_ros2_driver submodule update --init --recursive
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 # 首次使用 rosdep 时按需执行 sudo rosdep init；已有配置无需重复初始化
 rosdep update
-rosdep install --from-paths src/aubo_ros2_driver --ignore-src -r -y --rosdistro jazzy \
+rosdep install --from-paths src/aubo_ros2_driver --ignore-src -r -y --rosdistro humble \
   --skip-keys="gazebo_ros gazebo_ros2_control docker.io"
 CMAKE_BUILD_PARALLEL_LEVEL=4 colcon build --base-paths src/aubo_ros2_driver --packages-skip aubo_gazebo \
   --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
-`aubo_gazebo` 依赖 Gazebo Classic；上述 Jazzy 编译流程跳过此包及其两项依赖，不代表已验证 Gazebo 仿真。
+`aubo_gazebo` 依赖 Gazebo Classic；上述 Humble 编译流程跳过此包及其两项依赖，不代表已验证 Gazebo 仿真。
 `--base-paths` 避免把工作区内无关的 EtherCAT 源码纳入构建。
 内存较少时可将 `CMAKE_BUILD_PARALLEL_LEVEL` 降为 `2`。Docker 仅为测试依赖，本次未安装；需要 Docker 测试时移除对应 skip key。
 请以普通用户运行 rosdep，按提示使用 sudo 安装系统包；不要直接用 root 运行 rosdep，否则可能找不到用户的 rosdep 缓存。
@@ -32,22 +32,22 @@ source install/setup.bash
 ```bash
 sudo apt update
 sudo apt install \
-  ros-jazzy-controller-manager ros-jazzy-controller-manager-msgs \
-  ros-jazzy-hardware-interface ros-jazzy-controller-interface ros-jazzy-realtime-tools \
-  ros-jazzy-joint-state-broadcaster ros-jazzy-joint-trajectory-controller \
-  ros-jazzy-position-controllers ros-jazzy-velocity-controllers \
-  ros-jazzy-force-torque-sensor-broadcaster ros-jazzy-ros2-controllers-test-nodes \
-  ros-jazzy-control-msgs ros-jazzy-moveit-msgs \
-  ros-jazzy-moveit-ros-move-group ros-jazzy-moveit-kinematics ros-jazzy-moveit-planners \
-  ros-jazzy-moveit-simple-controller-manager ros-jazzy-moveit-configs-utils \
-  ros-jazzy-moveit-ros-visualization ros-jazzy-moveit-ros-warehouse \
-  ros-jazzy-moveit-setup-assistant ros-jazzy-moveit-ros-planning-interface \
-  ros-jazzy-warehouse-ros ros-jazzy-joint-state-publisher \
-  ros-jazzy-joint-state-publisher-gui ros-jazzy-xacro nlohmann-json3-dev socat
+  ros-humble-controller-manager ros-humble-controller-manager-msgs \
+  ros-humble-hardware-interface ros-humble-controller-interface ros-humble-realtime-tools \
+  ros-humble-joint-state-broadcaster ros-humble-joint-trajectory-controller \
+  ros-humble-position-controllers ros-humble-velocity-controllers \
+  ros-humble-force-torque-sensor-broadcaster ros-humble-ros2-controllers-test-nodes \
+  ros-humble-control-msgs ros-humble-moveit-msgs \
+  ros-humble-moveit-ros-move-group ros-humble-moveit-kinematics ros-humble-moveit-planners \
+  ros-humble-moveit-simple-controller-manager ros-humble-moveit-configs-utils \
+  ros-humble-moveit-ros-visualization ros-humble-moveit-ros-warehouse \
+  ros-humble-moveit-setup-assistant ros-humble-moveit-ros-planning-interface \
+  ros-humble-warehouse-ros ros-humble-joint-state-publisher \
+  ros-humble-joint-state-publisher-gui ros-humble-xacro nlohmann-json3-dev socat
 ```
 
-以上为已检测到的缺项与规划接口依赖；完整安装以初始化子模块后的 rosdep 结果为准。
-已按授权安装缺失依赖（apt 新增 101 个包），包括驱动运行依赖 `socat`。
+以上为 Humble 依赖名；完整安装以初始化子模块后的 rosdep 结果为准。
+此前环境安装时 apt 新增 101 个包，其中包括驱动运行依赖 `socat`。
 `docker.io` 为驱动测试依赖，本次跳过。模型子模块已初始化，固定版本为 `47fa5e02fa873f27f7e812d31f31e3f4cf5e56b1`。
 模型包构建会在子模块 `urdf/` 下生成 `.urdf.xacro` 文件，因此 Git 可能显示该子模块含未跟踪文件。
 
@@ -65,23 +65,24 @@ sudo apt install \
 
 - `ros_joints_plan` 删除 ROS 1 的 `tf` / `actionlib`，补齐 tf2、MoveIt 规划接口和 lint 测试依赖。
 - `aubo_dashboard_msgs` 补齐 `builtin_interfaces`；驱动补齐 `ament_index_python` 和 CMake 对 `ament_cmake_python` 的显式查找。
-- 硬件接口移除未使用的 `robot_mode` 消息头、`serviceinterface.h` 和 Jazzy 中不存在的 `visibility_control.h` 引用，显式包含 `unordered_map`。
+- 硬件接口移除未使用的 `robot_mode` 消息头、`serviceinterface.h` 和 `visibility_control.h` 引用，显式包含 `unordered_map`。
 - 已确认 `serviceinterface.h` 和 `aubo/robot/robot_state.h` 均由下载的 AUBO SDK 提供；前者在本硬件接口中未使用，移除以减少无关 SDK 依赖，后者保留。
 - SDK 安装规则同时包含 Release 与 Debug 动态库，修复 Release 构建安装后缺少 `libaubo_sdk.so` 的问题。
 
 验证：rosdep 检查通过（排除 Gazebo Classic 和 Docker）；驱动可执行文件可被 ROS 2 发现；
 `aubo_control.launch.py --show-args` 解析成功；硬件插件的 `ldd` 无缺失库，`ctypes.CDLL` 加载成功。上述为早期编译检查，当时未连接机器人。
-Jazzy 仍对旧式 `on_init(HardwareInfo)` 等接口给出弃用警告，不影响本次构建通过。
+旧式 `on_init(HardwareInfo)` 等接口可能给出弃用警告，不影响本次构建通过。
 
 本小节仅记录早期编译和依赖检查；后续 ES3 真机结果见下文“ES 控制柜、实时性与频率验收”。Gazebo 仿真仍未验证。
 
-## ROS 2 Jazzy 适配状态
+## ROS 2 Humble 适配状态
 
-当前仓库已经完成 ROS 2 Jazzy 的初步适配，`aubo_ros2_driver`、`aubo_description`、`aubo_moveit_config` 可在 Jazzy 环境下完成基础启动、状态显示、MoveIt 规划与轨迹执行。
+当前仓库按 ROS 2 Humble 使用。`aubo_ros2_driver`、`aubo_description`、`aubo_moveit_config` 可完成基础启动、状态显示、MoveIt 规划与轨迹执行。
 
 本次适配已处理的关键问题包括：
 
-- MoveIt OMPL 规划配置适配 Jazzy 参数格式。
+- MoveIt OMPL 使用 Humble 参数格式：`planning_plugin` 与 `request_adapters` 为字符串，插件名为 `default_planner_request_adapters/*`。不要改回字符串数组或 `default_planning_*` 插件名，否则 `move_group` 会因参数类型不匹配退出。
+- `realtime_tools::RealtimePublisher` 使用 Humble 的 `tryPublish`。
 - MoveIt 控制器管理器参数补齐，支持 `joint_trajectory_controller` 执行。
 - `joint_limits.yaml` 补充加速度限制，修复 `AddTimeOptimalParameterization` 失败问题。
 - `SRDF` 虚拟关节修正为 `world -> base_link`。
@@ -89,7 +90,7 @@ Jazzy 仍对旧式 `on_init(HardwareInfo)` 等接口给出弃用警告，不影�
 
 说明：
 
-- 当前文档中的 MoveIt 相关启动方式，均以 Jazzy 适配后的配置为准。
+- 当前文档中的 MoveIt 相关启动方式，均以 Humble 配置为准。
 - 如果是实机调试，仍建议优先完成 URDF 校准后再做 MoveIt 验证。
 
 ## 在 rviz 中查看 aubo 机器人模型（以 aubo_i5 为例）
@@ -112,19 +113,19 @@ ros2 launch aubo_description aubo_viewer.launch.py
 
 ```bash
 cd <your_ros2_ws>
-python3 -m pip install --user --break-system-packages numpy 'pyaubo_sdk==0.27.1rc4'
+python3 -m pip install --user numpy 'pyaubo_sdk==0.27.1rc4'
 python3 -c 'import numpy, pyaubo_sdk; print("校准依赖导入成功")'
 ```
 
-上述 SDK 版本已在 ARM64 / Python 3.12 环境验证可导入。该平台需要使用带匹配 wheel 的预发布版本；直接执行 `pip install pyaubo_sdk` 可能提示找不到匹配版本。C++ SDK 不包含可直接导入的 Python 模块，仍需单独安装 Python SDK。安装方式参考 [AUBO 官方说明](https://developer.aubo-robotics.cn/guide_sdk/4_dev_preparation/2_installation.html)。
+Python SDK 曾在 ARM64 / Python 3.12 环境验证可导入。当前 Humble 环境是 Ubuntu 22.04 / Python 3.10，仍需使用带匹配 wheel 的预发布版本；直接执行 `pip install pyaubo_sdk` 可能提示找不到匹配版本。C++ SDK 不包含可直接导入的 Python 模块，仍需单独安装 Python SDK。安装方式参考 [AUBO 官方说明](https://developer.aubo-robotics.cn/guide_sdk/4_dev_preparation/2_installation.html)。
 
-`--user` 将依赖安装到当前用户目录；Ubuntu 24.04 的系统 Python 使用 PEP 668 管理，因此这里通过 `--break-system-packages` 允许用户级安装。无需 `sudo pip`，也无需激活环境。如果终端此前已激活虚拟环境，请先执行 `deactivate`，再安装和运行。
+`--user` 将依赖安装到当前用户目录。Ubuntu 22.04 一般不需要 `--break-system-packages`。无需 `sudo pip`，也无需激活环境。如果终端此前已激活虚拟环境，请先执行 `deactivate`，再安装和运行。
 
 推荐方法：
 
 ```bash
 cd <your_ros2_ws>
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 python3 src/aubo_ros2_driver/aubo_description/scripts/calibrate_urdf_dh.py \
   --robot-model aubo_i5 \
   --robot-ip 192.168.127.128
@@ -146,7 +147,7 @@ source install/setup.bash
 首次使用新启动参数，或修改启动文件后，在工作空间根目录执行：
 
 ```bash
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 colcon build --packages-select aubo_description aubo_controllers aubo_ros2_driver aubo_moveit_config \
   --cmake-args -DAMENT_CMAKE_SYMLINK_INSTALL=OFF
 source install/setup.bash
@@ -156,7 +157,7 @@ source install/setup.bash
 
 ```bash
 cd ~/workspace
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch aubo_ros2_driver aubo_control.launch.py \
   aubo_type:=aubo_ES3 robot_ip:=192.168.3.100 \
@@ -168,7 +169,7 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py \
 
 ```bash
 cd ~/workspace
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch aubo_moveit_config aubo_moveit.launch.py \
   aubo_type:=aubo_ES3 use_calibrated:=true
@@ -205,7 +206,7 @@ ES 系列默认仍保留 100 Hz；本次这台柜体可显式采用以下已经�
 
 ```bash
 cd ~/workspace
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch aubo_ros2_driver aubo_control.launch.py \
   aubo_type:=aubo_ES3 robot_ip:=192.168.3.100 \
@@ -233,7 +234,7 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py \
 ### 实时性改动与验收口径
 
 - 辅助控制器依次加载，运动控制器最后激活；前置 spawner 失败则结束启动。
-- IO、robot_manage、robot_config 状态通过 `RealtimePublisher.try_publish` 交给后台线程发布，复用消息缓存；发布忙时跳过旧快照。
+- IO、robot_manage、robot_config 状态通过 `RealtimePublisher.tryPublish` 交给后台线程发布，复用消息缓存；发布忙时跳过旧快照。
 - 运动周期内不逐次查询伺服模式，队列满时不循环休眠重试；保留返回码时间预算和故障锁存。
 - 关节/模式 RTDE 为 200 Hz，TCP、IO、payload 等扩展状态为 50 Hz；这与控制器管理器的目标频率是不同设置。
 - 真实 IO / 配置命令仍同步执行，SDK 单次 RPC 仍可能阻塞；本次没有覆盖这些服务与运动并发的负载。
@@ -247,59 +248,7 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py \
 
 `5*t` 不退出是运行底线，不能单独证明轨迹跟踪合格。队列满不表示新目标被接受，仍需同时检查返回码、指令间隔和轨迹误差。当前 `5*t` 策略以模式 1 的现场记录为依据，其他模式需核对柜端语义。上述判据不会关闭警告、放宽轨迹容差或取消故障保护。
 
-FIFO 权限检查入口见下一节。本机已确认 RT 内核及控制线程 `FF / priority 50`，但 FIFO 调度不能消除网络、SDK 或柜端的阻塞。校准版 ES3 的微幅单轴验证不代表高负载、多轴轨迹、全部 IO 功能或 x86 控制柜已验收。
-
-## 本地诊断工具
-
-本工作区统一入口为 `scripts/aubo_diag.py`，完整说明见[本地诊断工具 README](../../scripts/aubo_diagnostics/README.md)。工具位于工作区级 `scripts/`，不在驱动仓库内部；单独克隆本仓库不会包含它们。历史 `log/` 中的试验脚本仅作为原始证据保留，后续复用以统一入口为准。
-
-```bash
-cd ~/workspace
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-python3 scripts/aubo_diag.py --help
-```
-
-| 子命令 | 用途 |
-| --- | --- |
-| `fifo` | 检查 RT 内核、rtprio/memlock 和实际 FF 线程；默认只读，`--apply` 才修改权限配置 |
-| `network` / `rpc` | 路由、TCP、Ping、可选 FIFO 唤醒延迟，以及 SDK 只读查询耗时 |
-| `collect` | 通过 SSH 按控制柜本地时间提取轮转日志 |
-| `sweep` | 分档启动/停止真机驱动，采集双端日志，按所选判据验收 |
-| `observe` | 被动观察关节状态到达间隔、状态话题数量及关节行程 |
-| `motion` | 已启动驱动上的受限 wrist3 往返验收，不自动启动驱动 |
-| `report` | 合并已有结果并生成 Markdown 与候选配置 JSON，不改写原始判定 |
-
-先预览扫频计划，不连接或启动硬件：
-
-```bash
-python3 scripts/aubo_diag.py sweep --rates 100,110 \
-  --servo-period auto --servo-mode 1 --acceptance runtime \
-  --output log/my_rate_plan
-```
-
-确认现场已准备、没有重复驱动或外部运动程序后，再执行联合验收：
-
-```bash
-# 密码仅放入当前 shell 环境，不写入脚本或可共享命令历史。
-read -rsp '控制柜 SSH 密码: ' AUBO_SSH_PASSWORD; echo
-export AUBO_SSH_PASSWORD
-python3 scripts/aubo_diag.py sweep --run --rates 110 \
-  --servo-period auto --servo-mode 1 --acceptance runtime \
-  --micro-trajectory --warmup 15 --duration 180 \
-  --robot-ip 192.168.3.100 --ssh-port 8822 --output log/rate110_runtime_01
-unset AUBO_SSH_PASSWORD
-```
-
-默认只显示计划；`--run` 启动真机待机 Servo，另加 `--micro-trajectory` 才会在观察期内执行同一条 8 秒微幅轨迹。独立 `motion` 子命令需要 `--run-motion`。微轨迹工具不提供 MoveIt 避障或工具环境碰撞验证。
-
-每档保存原始驱动/柜端日志、启动 PID、检查点及最终 `summary.json`；请使用新的输出目录。硬件故障立即停止整轮，不自动恢复。报告按模式、Hz、t 和判据区分；同配置后续失败会否决此前短测候选，缺失证据和未完成记录不判通过。柜端时间可能与 Orin 有偏移，不能直接相减当作单向网络延迟。
-
-网络与 FIFO 默认检查不运动；SDK 只读探针另从 `AUBO_RPC_PASSWORD` 读取 SDK 密码，不应混用 SSH root 密码。工具自检：
-
-```bash
-python3 -m unittest discover -s scripts/aubo_diagnostics/tests -v
-```
+本机已确认 RT 内核及控制线程 `FF / priority 50`，但 FIFO 调度不能消除网络、SDK 或柜端的阻塞。校准版 ES3 的微幅单轴验证不代表高负载、多轴轨迹、全部 IO 功能或 x86 控制柜已验收。
 
 ## 驱动真实机械臂 aubo_i5（修改机器人对应 `robot_ip`、`aubo_type`）
 
@@ -310,7 +259,7 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:
 ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 ```
 
-在 ROS 2 Jazzy 下，`aubo_moveit.launch.py` 已完成基础适配，可直接用于 RViz + MoveIt 联调。`launch_rviz` 默认为 `true`。
+在 ROS 2 Humble 下，`aubo_moveit.launch.py` 可直接用于 RViz + MoveIt 联调。`launch_rviz` 默认为 `true`。
 
 ### 伺服模式参数
 
@@ -474,7 +423,7 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:
 ros2 launch ros_joints_plan joints_plan.launch.py aubo_type:=aubo_i5
 ```
 
-在 ROS 2 Jazzy 下，`ros_joints_plan` 的 launch 配置也已同步到当前 MoveIt 适配方案。
+在 ROS 2 Humble 下，`ros_joints_plan` 的 launch 配置使用同一套 MoveIt 参数。
 
 ## Dashboard Client 与 JSON-RPC 调试服务（修改机器人对应 `robot_ip`）
 
