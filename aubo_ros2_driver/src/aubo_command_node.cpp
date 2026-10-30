@@ -31,6 +31,7 @@ using aubo_msgs::msg::AuboCommandStatus;
 using aubo_msgs::msg::AuboJointMove;
 using aubo_msgs::msg::AuboLinearMove;
 using aubo_msgs::msg::AuboPowerCommand;
+using arcs::common_interface::AUBO_BUSY;
 using arcs::common_interface::RobotModeType;
 using arcs::common_interface::SafetyModeType;
 

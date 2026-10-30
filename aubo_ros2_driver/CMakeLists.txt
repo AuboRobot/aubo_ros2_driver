@@ -118,6 +118,9 @@ ament_target_dependencies(aubo_command_node
   geometry_msgs
   rclcpp
 )
+# The SDK bundles an older libstdc++; prefer the compiler's runtime for ROS.
+set_target_properties(aubo_robot_driver_plugin aubo_command_node PROPERTIES
+  BUILD_RPATH "${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}")
 add_executable(robot_state_helper
   src/robot_state_helper.cpp
   src/robot_state_helper_node.cpp
