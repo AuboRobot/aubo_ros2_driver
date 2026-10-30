@@ -184,7 +184,8 @@ if ! command -v setcap >/dev/null 2>&1; then
 fi
 
 # file capabilities 会进入 AT_SECURE：忽略 LD_LIBRARY_PATH。
-# 将 ROS（含 multiarch）与本包 lib 写入 ld.so.conf，确保间接依赖可加载。
+# 将 ROS（含 multiarch）、本包 lib，以及工作区 rosidl typesupport lib 写入
+# ld.so.conf。rmw 按 SONAME dlopen typesupport，不使用插件 RUNPATH。
 ROS_PREFIX="$(ros2 pkg prefix controller_interface 2>/dev/null || true)"
 if [[ -z "${ROS_PREFIX}" ]]; then
   ROS_PREFIX="/opt/ros/${ROS_DISTRO:-humble}"
@@ -197,24 +198,43 @@ fi
 ROS_LIB_ARCH="${ROS_LIB}/${MULTIARCH}"
 WS_LIB="$(readlink -f "$(ros2 pkg prefix aubo_ros2_driver)/lib")"
 LD_CONF=/etc/ld.so.conf.d/aubo_ros2_rt.conf
-LD_CONF_BODY="# aubo_ros2_control_node + setcap 需要（AT_SECURE 忽略 LD_LIBRARY_PATH）
-${ROS_LIB}
-"
+REQUIRED_LD_PATHS=("${ROS_LIB}")
 if [[ -d "${ROS_LIB_ARCH}" ]]; then
-  LD_CONF_BODY+="${ROS_LIB_ARCH}
-"
+  REQUIRED_LD_PATHS+=("${ROS_LIB_ARCH}")
 fi
-LD_CONF_BODY+="${WS_LIB}
-"
-echo "写入 ${LD_CONF}:"
-echo "  ${ROS_LIB}"
-[[ -d "${ROS_LIB_ARCH}" ]] && echo "  ${ROS_LIB_ARCH}"
-echo "  ${WS_LIB}"
+REQUIRED_LD_PATHS+=("${WS_LIB}")
+INSTALL_PREFIX="$(cd "${WS_LIB}/../.." && pwd)"
+for libdir in "${INSTALL_PREFIX}"/*/lib; do
+  [[ -d "${libdir}" ]] || continue
+  if compgen -G "${libdir}/lib*__rosidl_typesupport_*.so" > /dev/null; then
+    REQUIRED_LD_PATHS+=("$(readlink -f "${libdir}")")
+  fi
+done
+echo "确保 ${LD_CONF} 含有:"
+printf '  %s\n' "${REQUIRED_LD_PATHS[@]}"
+LD_CONF_CURRENT=""
+if [[ -f "${LD_CONF}" ]]; then
+  if [[ "${EUID}" -eq 0 ]]; then
+    LD_CONF_CURRENT="$(cat "${LD_CONF}")"
+  else
+    LD_CONF_CURRENT="$(sudo cat "${LD_CONF}")"
+  fi
+fi
+LD_CONF_BODY="${LD_CONF_CURRENT}"
+if [[ -z "${LD_CONF_BODY}" ]]; then
+  LD_CONF_BODY="# aubo_ros2_control_node + setcap 需要（AT_SECURE 忽略 LD_LIBRARY_PATH）"
+fi
+for path in "${REQUIRED_LD_PATHS[@]}"; do
+  if ! printf '%s\n' "${LD_CONF_BODY}" | grep -qxF "${path}"; then
+    LD_CONF_BODY+=$'\n'"${path}"
+  fi
+done
+LD_CONF_BODY+=$'\n'
 if [[ "${EUID}" -ne 0 ]]; then
-  echo "${LD_CONF_BODY}" | sudo tee "${LD_CONF}" >/dev/null
+  printf '%s' "${LD_CONF_BODY}" | sudo tee "${LD_CONF}" >/dev/null
   sudo ldconfig
 else
-  echo "${LD_CONF_BODY}" | tee "${LD_CONF}" >/dev/null
+  printf '%s' "${LD_CONF_BODY}" | tee "${LD_CONF}" >/dev/null
   ldconfig
 fi
 
@@ -233,6 +253,15 @@ if echo "${SMOKE_OUT}" | grep -qE "error while loading shared libraries|version 
   exit 3
 fi
 echo "共享库加载检查: OK（AT_SECURE 下可解析 .so）"
+INTRO_SONAME="libaubo_msgs__rosidl_typesupport_introspection_cpp.so"
+INTRO_PATH="$(ros2 pkg prefix aubo_msgs 2>/dev/null || true)/lib/${INTRO_SONAME}"
+if [[ -f "${INTRO_PATH}" ]]; then
+  if ! env -i PATH=/usr/bin:/bin python3 -c 'import ctypes,sys; ctypes.CDLL(sys.argv[1])' "${INTRO_SONAME}"; then
+    echo "错误: ld.so.cache 仍找不到 ${INTRO_SONAME}。setcap 进程会因此无法创建 aubo_msgs publisher。"
+    exit 3
+  fi
+  echo "typesupport SONAME 检查: OK"
+fi
 
 echo ""
 echo "验证（必须重启 aubo_ros2_control_node 后）:"

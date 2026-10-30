@@ -4,7 +4,8 @@
 # 仅 POST_BUILD 不会执行，因此必须在每次编译/启动时重打。
 #
 # 提权分两条路径，互不干扰：
-#   x86 PC: NOPASSWD 仅限 /usr/local/sbin/aubo-setcap-rt；不可 sudo -n cp/setcap。
+#   x86 PC: NOPASSWD 仅限 /usr/local/sbin/aubo-setcap-rt。wrapper 在 setcap 时
+#           同步本工作区 typesupport lib 到 ld.so.conf。不可 sudo -n cp/ldconfig。
 #   S100:   sunrise 常有 NOPASSWD: ALL，可 sudo -n setcap 并写入 ld.so.conf。
 set -u
 BIN="${1:-}"
@@ -133,48 +134,63 @@ ensure_ld_conf() {
   fi
   if [[ -n "${ws_lib}" && -d "${ws_lib}" ]]; then
     needed+=("${ws_lib}")
+    # rmw 按 SONAME dlopen typesupport，不走插件 RUNPATH。AT_SECURE 又忽略
+    # LD_LIBRARY_PATH，所以工作区消息包的 lib 必须进 ld.so.cache。
+    local install_prefix libdir
+    install_prefix="$(cd "${ws_lib}/../.." && pwd)"
+    for libdir in "${install_prefix}"/*/lib; do
+      [[ -d "${libdir}" ]] || continue
+      if compgen -G "${libdir}/lib*__rosidl_typesupport_*.so" > /dev/null; then
+        needed+=("$(readlink -f "${libdir}")")
+      fi
+    done
   fi
 
   make_ld_conf_world_readable "${ld_conf}" || true
 
-  # 路径已在 conf 中则跳过（忽略注释差异，避免每次编译都去 sudo install / ldconfig）
-  local missing=0
-  if [[ -f "${ld_conf}" ]]; then
-    local p
-    for p in "${needed[@]}"; do
-      if ! ld_conf_has_path "${ld_conf}" "${p}"; then
-        missing=1
+  # 只追加缺失路径，保留 conf 里已有的其他工作区条目。
+  local -a missing_paths=()
+  local p seen q
+  local -a unique_needed=()
+  for p in "${needed[@]}"; do
+    seen=0
+    for q in "${unique_needed[@]+"${unique_needed[@]}"}"; do
+      if [[ "${p}" == "${q}" ]]; then
+        seen=1
         break
       fi
     done
-  else
-    missing=1
-  fi
-  if [[ "${missing}" -eq 0 ]]; then
+    [[ "${seen}" -eq 0 ]] && unique_needed+=("${p}")
+  done
+  for p in "${unique_needed[@]}"; do
+    if [[ ! -f "${ld_conf}" ]] || ! ld_conf_has_path "${ld_conf}" "${p}"; then
+      missing_paths+=("${p}")
+    fi
+  done
+  if [[ ${#missing_paths[@]} -eq 0 ]]; then
     return 0
   fi
 
   if ! have_passwordless_sudo; then
     echo "WARN: ${ld_conf} 缺少 ROS/工作区 lib 路径且无免密 sudo；setcap 后若节点找不到 .so，请运行: bash scripts/configure_aubo_realtime.sh" >&2
+    printf '  %s\n' "${missing_paths[@]}" >&2
     return 1
   fi
 
-  local body="# aubo_ros2_control_node + setcap（AT_SECURE 忽略 LD_LIBRARY_PATH）
-${ros_lib}
-"
-  if [[ -d "${ros_lib_arch}" ]]; then
-    body+="${ros_lib_arch}
-"
-  fi
-  if [[ -n "${ws_lib}" && -d "${ws_lib}" ]]; then
-    body+="${ws_lib}
-"
-  fi
   local tmp rc=0
   tmp="$(mktemp)"
-  printf '%s' "${body}" > "${tmp}"
+  if [[ -f "${ld_conf}" ]]; then
+    cp "${ld_conf}" "${tmp}"
+    if [[ -n "$(tail -c1 "${tmp}" || true)" ]]; then
+      printf '\n' >> "${tmp}"
+    fi
+  else
+    printf '%s\n' "# aubo_ros2_control_node + setcap（AT_SECURE 忽略 LD_LIBRARY_PATH）" > "${tmp}"
+  fi
+  printf '%s\n' "${missing_paths[@]}" >> "${tmp}"
   if install_ld_conf "${tmp}" "${ld_conf}" && run_ldconfig; then
-    echo "Wrote ${ld_conf}"
+    echo "Updated ${ld_conf}:"
+    printf '  %s\n' "${missing_paths[@]}"
   else
     echo "WARN: 无法写入 ${ld_conf}；setcap 后可能因 AT_SECURE 找不到 ROS .so" >&2
     rc=1

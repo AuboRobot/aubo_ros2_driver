@@ -4,10 +4,13 @@
 
 ## 安装与编译（Ubuntu 22.04 / ROS 2 Humble）
 
-在工作区根目录执行。模型由 Git 子模块提供，首次克隆后必须初始化：
+先建立 ROS 工作区，再把本仓库克隆到 `src` 下。克隆完成后目录为 `~/ws_humble/src/aubo_ros2_driver`，各个 ROS 包在该目录内。编译、校准和启动命令都在工作区根目录 `~/ws_humble` 执行。模型由 Git 子模块提供，首次克隆后必须初始化：
 
 ```bash
-cd ~/workspace
+mkdir -p ~/ws_humble/src
+cd ~/ws_humble/src
+git clone https://github.com/AuboRobot/aubo_ros2_driver.git
+cd ~/ws_humble
 git -C src/aubo_ros2_driver submodule update --init --recursive
 source /opt/ros/humble/setup.bash
 # 首次使用 rosdep 时按需执行 sudo rosdep init；已有配置无需重复初始化
@@ -20,7 +23,7 @@ source install/setup.bash
 ```
 
 `aubo_gazebo` 依赖 Gazebo Classic；上述 Humble 编译流程跳过此包及其两项依赖，不代表已验证 Gazebo 仿真。
-`--base-paths` 避免把工作区内无关的 EtherCAT 源码纳入构建。
+`--base-paths src/aubo_ros2_driver` 只构建这次克隆进来的仓库。之后若在 `src` 下再放入其他仓库，它们不会被这次命令编进去。
 内存较少时可将 `CMAKE_BUILD_PARALLEL_LEVEL` 降为 `2`。Docker 仅为测试依赖，本次未安装；需要 Docker 测试时移除对应 skip key。
 请以普通用户运行 rosdep，按提示使用 sudo 安装系统包；不要直接用 root 运行 rosdep，否则可能找不到用户的 rosdep 缓存。
 
@@ -75,6 +78,95 @@ sudo apt install \
 
 本小节仅记录早期编译和依赖检查；后续 ES3 真机结果见下文“ES 控制柜、实时性与频率验收”。Gazebo 仿真仍未验证。
 
+## ros2_control 内核实时性配置
+
+控制器管理器会在主控制循环上申请优先级 50 的 `SCHED_FIFO`。普通用户默认不能设置该调度策略。文件 capability 让 `aubo_ros2_control_node` 在不开放通用 root 的前提下获得 `CAP_SYS_NICE` 和 `CAP_SYS_RESOURCE`。
+
+### 配置实时权限
+
+这是不依赖 file capability 的备选：把当前用户加入 `realtime` 组并放宽 `rtprio`。改完后必须重新登录。
+
+**步骤 1：创建 realtime 用户组**
+
+```bash
+sudo addgroup realtime
+sudo usermod -a -G realtime $(whoami)
+```
+
+**步骤 2：配置系统限制**
+
+编辑 `/etc/security/limits.conf`，在文件末尾为 realtime 组添加：
+
+```
+@realtime soft rtprio 99
+@realtime soft priority 99
+@realtime soft memlock unlimited
+@realtime hard rtprio 99
+@realtime hard priority 99
+@realtime hard memlock unlimited
+```
+
+**步骤 3：重新登录**
+
+限制在新的登录会话里生效。可用 `ulimit -r` 查看当前 `rtprio` 上限。
+
+### 关于实时调度
+
+- 实时优先级范围是 0–99，数值越大优先级越高。本驱动控制环使用 50。
+- `SCHED_FIFO` 用于控制环；桌面和其他普通进程仍是 `SCHED_OTHER`。
+- 控制面与控制柜保持同一二层有线直连。FIFO 不能消除网络、SDK 或整机卡死造成的控制环停顿；柜端约 `5*t` 收不到成功 `servoJoint` 会 Automatic exit。频率与链路的验收口径见下文“ES 控制柜、实时性与频率验收”。
+
+调度策略说明见 [sched(7)](https://man7.org/linux/man-pages/man7/sched.7.html)。
+
+### 受限的 setcap 自动配置
+
+不要给普通用户开放无参数限制的 `sudo setcap`。那会允许对任意程序授予 `cap_setuid`、`cap_sys_admin` 等高危 capability，效果接近 root。
+
+`aubo_ros2_driver/scripts/apply_aubo_rt_caps.sh` 由 CMake 的 `apply_aubo_rt_caps` ALL 目标在每次 `colcon build` 时调用，不依赖是否重新链接。真机启动前也会再执行一次。它给 `aubo_ros2_control_node` 补 `cap_sys_nice,cap_sys_resource+ep`。两条环境的免密范围不要混用：
+
+| 环境 | 免密 sudo | 编译期行为 |
+| --- | --- | --- |
+| PC x86 | 仅 `/usr/local/sbin/aubo-setcap-rt` | 只调用该包装器。包装器设置 capability，并在缺路径时把本工作区的消息类型支持库目录追加到 `/etc/ld.so.conf.d/aubo_ros2_rt.conf`，然后执行 `ldconfig`。不调用 `sudo -n cp`、`sudo -n setcap` 或 `sudo -n ldconfig`，因此 colcon 不应出现 `sudo: 需要密码` |
+| RDK S100 aarch64 | `sunrise` 常有 `NOPASSWD: ALL` | 可以不装包装器，直接 `sudo -n /usr/sbin/setcap`。`apply_aubo_rt_caps.sh` 在需要时写入同一个 conf。S100 重启会丢掉 file capability，所以每次编译和真机启动都会再打 |
+
+包装器只接受 `*/aubo_ros2_driver/build/` 或 `*/ws_humble/build/` 下、且归当前用户所有的可执行文件，capability 字符串固定。`--symlink-install` 时 install 树里的节点是指向 build 目录真实二进制的符号链接，`setcap` 作用在该真实文件上。
+
+file capability 会使进程进入 `AT_SECURE`，动态链接器忽略 `LD_LIBRARY_PATH`。插件自己的 `RUNPATH` 只能解析它的 `NEEDED` 依赖。`io_and_status_controller` 创建 `aubo_msgs` publisher 时，`rmw` 还会按库名加载 `libaubo_msgs__rosidl_typesupport_introspection_cpp.so`。这个库不在插件的 `NEEDED` 列表里，因此工作区 `install/*/lib` 中带 `rosidl_typesupport` 的目录必须进入 `ld.so.cache`。缺这条路径时，控制器 configure 失败，日志里是 `type_support is null` 和 `cannot open shared object file`。
+
+包装器只追加从该二进制推导出的目录：ROS `lib`、multiarch 子目录、`install/aubo_ros2_driver/lib`，以及 `install/*/lib` 里实际含有 `lib*__rosidl_typesupport_*.so` 的目录。已有行保留，路径齐全时不再执行 `ldconfig`。
+
+**PC x86 首次配置**（尚未安装包装器、或更新了 `aubo_setcap_rt_wrapper.sh` 之后）：
+
+```bash
+cd ~/ws_humble
+sudo install -o root -g root -m 0755 \
+  src/aubo_ros2_driver/aubo_ros2_driver/scripts/aubo_setcap_rt_wrapper.sh \
+  /usr/local/sbin/aubo-setcap-rt
+echo "$(whoami) ALL=(root) NOPASSWD: /usr/local/sbin/aubo-setcap-rt" | sudo tee /etc/sudoers.d/aubo-setcap-rt >/dev/null
+sudo chmod 440 /etc/sudoers.d/aubo-setcap-rt
+sudo visudo -cf /etc/sudoers.d/aubo-setcap-rt
+```
+
+`$(whoami)` 由当前 shell 展开后再写入文件，sudoers 里保存的是当前用户名。`visudo -cf` 只检查语法，通过时退出码为 0。
+
+仓库里的脚本更新后，必须重新执行上面的 `sudo install`。`/usr/local/sbin/aubo-setcap-rt` 不会随 `colcon build` 自动替换。
+
+然后确认免密包装器可以同时补上 capability 和动态库缓存：
+
+```bash
+cd ~/ws_humble
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+sudo -n /usr/local/sbin/aubo-setcap-rt \
+  build/aubo_ros2_driver/aubo_ros2_control_node
+getcap build/aubo_ros2_driver/aubo_ros2_control_node
+grep aubo_msgs /etc/ld.so.conf.d/aubo_ros2_rt.conf
+```
+
+`getcap` 应包含 `cap_sys_nice,cap_sys_resource=ep`。conf 中应有 `install/aubo_msgs/lib`。之后 `colcon build` 会自动补 capability；若又出现新的工作区消息包，同一次编译会把对应 `lib` 追加进 conf。
+
+`src/aubo_ros2_driver/aubo_ros2_driver/scripts/configure_aubo_realtime.sh` 仍用于检查挂载是否带 `nosuid`（该选项会让 file capability 的 `CapEff` 保持为 0），并在已 source 工作区时复检类型支持库能否在不设置 `LD_LIBRARY_PATH` 的情况下按库名加载。挂载含 `nosuid` 时 FIFO 不会生效，需先改挂载选项再重新登录或 remount。
+
 ## ROS 2 Humble 适配状态
 
 当前仓库按 ROS 2 Humble 使用。`aubo_ros2_driver`、`aubo_description`、`aubo_moveit_config` 可完成基础启动、状态显示、MoveIt 规划与轨迹执行。
@@ -112,7 +204,7 @@ ros2 launch aubo_description aubo_viewer.launch.py
 首次运行先将 Python 依赖安装到当前用户环境，无需创建虚拟环境：
 
 ```bash
-cd <your_ros2_ws>
+cd ~/ws_humble
 python3 -m pip install --user numpy 'pyaubo_sdk==0.27.1rc4'
 python3 -c 'import numpy, pyaubo_sdk; print("校准依赖导入成功")'
 ```
@@ -124,7 +216,7 @@ Python SDK 曾在 ARM64 / Python 3.12 环境验证可导入。当前 Humble 环�
 推荐方法：
 
 ```bash
-cd <your_ros2_ws>
+cd ~/ws_humble
 source /opt/ros/humble/setup.bash
 python3 src/aubo_ros2_driver/aubo_description/scripts/calibrate_urdf_dh.py \
   --robot-model aubo_i5 \
@@ -144,7 +236,7 @@ source install/setup.bash
 
 校准文件与具体机械臂对应。本机校准文件为 `aubo_description/urdf/aubo_ES3_calibrated.urdf`；采集时该机械臂使用 `172.16.31.105`，后续同一机械臂改为有线直连 `192.168.3.100`。请勿直接用于其他同型号机械臂。
 
-首次使用新启动参数，或修改启动文件后，在工作空间根目录执行：
+首次使用新启动参数，或修改启动文件后，在 `~/ws_humble` 执行：
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -156,7 +248,7 @@ source install/setup.bash
 终端 1：启动真机驱动，加载校准模型：
 
 ```bash
-cd ~/workspace
+cd ~/ws_humble
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch aubo_ros2_driver aubo_control.launch.py \
@@ -168,7 +260,7 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py \
 终端 2：启动 MoveIt 和 RViz，加载相同校准模型：
 
 ```bash
-cd ~/workspace
+cd ~/ws_humble
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch aubo_moveit_config aubo_moveit.launch.py \
@@ -205,7 +297,7 @@ ros2 param get /controller_manager update_rate
 ES 系列默认仍保留 100 Hz；本次这台柜体可显式采用以下已经过短时联合验收的配置：
 
 ```bash
-cd ~/workspace
+cd ~/ws_humble
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch aubo_ros2_driver aubo_control.launch.py \
@@ -248,7 +340,7 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py \
 
 `5*t` 不退出是运行底线，不能单独证明轨迹跟踪合格。队列满不表示新目标被接受，仍需同时检查返回码、指令间隔和轨迹误差。当前 `5*t` 策略以模式 1 的现场记录为依据，其他模式需核对柜端语义。上述判据不会关闭警告、放宽轨迹容差或取消故障保护。
 
-本机已确认 RT 内核及控制线程 `FF / priority 50`，但 FIFO 调度不能消除网络、SDK 或柜端的阻塞。校准版 ES3 的微幅单轴验证不代表高负载、多轴轨迹、全部 IO 功能或 x86 控制柜已验收。
+本机已确认 RT 内核及控制线程 `FF / priority 50`，但 FIFO 调度不能消除网络、SDK 或柜端的阻塞。校准版 ES3 的微幅单轴验证不代表高负载、多轴轨迹、全部 IO 功能或 x86 控制柜已验收。FIFO file capability 与 `ld.so.conf` 的配置见上文“ros2_control 内核实时性配置”。
 
 ## 驱动真实机械臂 aubo_i5（修改机器人对应 `robot_ip`、`aubo_type`）
 
