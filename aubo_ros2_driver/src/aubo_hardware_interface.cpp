@@ -620,23 +620,7 @@ bool AuboHardwareInterface::OnActive()
         return false;
     }
 
-    // 激活前先解除防护停止，再自动上电到 Running
-    if (!clearProtectiveStopIfNeeded()) {
-        RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
-            "protective stop unlock failed before power-on");
-        return false;
-    }
-    if (!ensureRobotRunning()) {
-        RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
-            "自动上电/启动失败，机械臂未进入 Running。");
-        return false;
-    }
-    if (!clearProtectiveStopIfNeeded()) {
-        RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
-            "protective stop unlock failed before servo-ready");
-        return false;
-    }
-
+    // 连接/激活只建立 RPC 与 RTDE，不在此上电，也不解除防护停止。
     rpc_client_->getRobotInterface(robot_name_)
     ->getRobotConfig()
     ->setHardwareCustomParameters("[joint_func] \n vff_enable = false\n");
