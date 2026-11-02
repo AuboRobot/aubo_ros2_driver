@@ -1,6 +1,7 @@
 from pathlib import Path
 import tempfile
 import yaml
+from aubo_ros2_driver.robot_description import configure_hardware
 from aubo_ros2_driver.control_profile import resolve_update_rate, resolve_servo_period
 
 from ament_index_python.packages import get_package_share_directory
@@ -17,6 +18,7 @@ from launch.substitutions import (
     PythonExpression,
 )
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def _ensure_description_xacro(description_share: str, aubo_type: str) -> None:
@@ -118,7 +120,15 @@ def launch_setup(context, *args, **kwargs):
            
         ]
     )
-    robot_description = {"robot_description": robot_description_content}
+    # The public description revision predates these driver parameters and
+    # leaves fake hardware commented out. Own this configuration in the driver.
+    robot_description_xml = configure_hardware(
+        robot_description_content.perform(context),
+        use_fake_hardware.perform(context).lower() == "true",
+        robot_ip.perform(context), 1.0 / rate, servo_period,
+        servo_mode.perform(context), fake_sensor_commands.perform(context))
+    robot_description = {"robot_description": ParameterValue(
+        robot_description_xml, value_type=str)}
 
     rviz_config_file = PathJoinSubstitution(
         [get_package_share_directory(moveit_config_package.perform(context)), "config", "moveit.rviz"]
@@ -258,7 +268,7 @@ def generate_launch_description():
         DeclareLaunchArgument("servo_period", default_value="0.01",
             description="servoJoint t in seconds, or auto=1/update_rate; default .01 preserves existing profiles."),
         DeclareLaunchArgument("controller_profile", default_value="auto",
-            description="auto: ES models 100Hz, others YAML; es:100Hz; legacy:200Hz; custom:YAML.")]
+            description="auto/custom: YAML for all models; es:100Hz; legacy:200Hz.")]
 
 
 

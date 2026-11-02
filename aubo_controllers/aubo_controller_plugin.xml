@@ -13,4 +13,9 @@
       Controls AUBO handguide mode through ros2_control command interfaces.
     </description>
   </class>
+  <class name="aubo_controllers/AuboJointTrajectoryController"
+         type="aubo_driver::AuboJointTrajectoryController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>Joint trajectory controller that aborts actions on AUBO safety pauses and hardware faults.</description>
+  </class>
 </library>

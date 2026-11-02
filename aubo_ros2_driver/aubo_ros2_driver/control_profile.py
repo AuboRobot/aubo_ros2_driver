@@ -1,13 +1,12 @@
-"""Select by remote controller/model family, never by the ROS host CPU."""
+"""Select control frequency only from explicit profile, override or YAML."""
 def resolve_update_rate(robot_type, profile, override, configured_rate):
     if profile not in ('auto', 'es', 'legacy', 'custom'):
         raise ValueError('controller_profile must be auto, es, legacy or custom')
-    selected = 'es' if profile == 'auto' and robot_type.startswith('aubo_ES') else profile
     if override:
         rate = int(override)
-    elif selected == 'es':
+    elif profile == 'es':
         rate = 100
-    elif selected == 'legacy':
+    elif profile == 'legacy':
         rate = 200
     else:
         rate = int(configured_rate)

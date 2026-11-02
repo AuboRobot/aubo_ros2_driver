@@ -12,6 +12,7 @@ cd ~/ws_humble/src
 git clone https://github.com/AuboRobot/aubo_ros2_driver.git
 cd ~/ws_humble
 git -C src/aubo_ros2_driver submodule update --init --recursive
+python3 src/aubo_ros2_driver/scripts/prepare_description.py
 source /opt/ros/humble/setup.bash
 # 首次使用 rosdep 时按需执行 sudo rosdep init；已有配置无需重复初始化
 rosdep update
@@ -52,6 +53,8 @@ sudo apt install \
 以上为 Humble 依赖名；完整安装以初始化子模块后的 rosdep 结果为准。
 此前环境安装时 apt 新增 101 个包，其中包括驱动运行依赖 `socat`。
 `docker.io` 为驱动测试依赖，本次跳过。模型子模块已初始化，固定版本为 `47fa5e02fa873f27f7e812d31f31e3f4cf5e56b1`。
+驱动启动时在生成的 robot description 中设置 hardware plugin 和 Servo 参数，以兼容公开模型版本；`use_fake_hardware:=true` 使用 `mock_components/GenericSystem`，不连接 SDK。
+公开模型版本含 6 个未被 URDF 引用的悬空 `aubo_i10HL/visual/link0..5.DAE` 链接，会使 Humble 的 `--symlink-install` 失败。上面的准备脚本仅在确认目标不存在且未被模型引用时移除它们，可重复执行，不替换 mesh。每次重新初始化或重置子模块后重新执行；Git 会显示这 6 项本地删除，子模块提交指针仍为公开的 `47fa5e0`。
 模型包构建会在子模块 `urdf/` 下生成 `.urdf.xacro` 文件，因此 Git 可能显示该子模块含未跟踪文件。
 
 常见问题：
@@ -279,7 +282,7 @@ ros2 launch aubo_moveit_config aubo_moveit.launch.py \
 
 | 参数 | 默认值 | 行为 |
 | --- | --- | --- |
-| `controller_profile` | `auto` | ES 型号选 100 Hz，其他型号沿用控制器 YAML；`es` 显式选 100 Hz，`legacy` 选 200 Hz，`custom` 沿用 YAML |
+| `controller_profile` | `auto` | 所有型号沿用控制器 YAML，不按型号名切换频率；`es` 显式选 100 Hz，`legacy` 选 200 Hz，`custom` 沿用 YAML |
 | `update_rate` | 空 | 显式指定时覆盖 profile，支持 25～500 Hz；这是控制器管理器的目标频率，不是硬实时保证 |
 | `servo_period` | `0.01` | SDK `servoJoint` 的执行时间 `t`，单位秒；显式设置 `auto` 时按 `1/update_rate` 计算 |
 | `servo_mode` | `1` | 进入的伺服模式；允许传入 SDK 定义的 1～7，柜端实际支持情况需另确认；0 仅供内部退出使用 |
@@ -294,7 +297,7 @@ ros2 param get /controller_manager update_rate
 
 ### 本次推荐候选：110 Hz 配对执行时间
 
-ES 系列默认仍保留 100 Hz；本次这台柜体可显式采用以下已经过短时联合验收的配置：
+ES 的 100 Hz 配置通过 `controller_profile:=es` 显式选择；本次这台柜体可显式采用以下已经过短时联合验收的配置：
 
 ```bash
 cd ~/ws_humble
@@ -381,7 +384,7 @@ ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 
 不同控制器和 SDK 版本对模式支持可能存在差异，实际可用取值请以当前控制器配套 SDK 文档为准。
 
-当前运动命令链路支持 `position` command interface。`velocity` 仅保留接口占位，`speedServo()` 后端尚未实现；激活后会报错并进入故障处理，不应将其用于真机速度控制。
+当前运动命令链路支持 `position` command interface。`velocity` 仅保留接口占位，`speedServo()` 后端尚未实现；调用时仅提示一次不支持，不发送速度命令、不锁存硬件故障，也不代表速度控制成功。当前不可用于真机速度控制。
 
 ### IO、配置与拖动示教
 
@@ -398,7 +401,17 @@ ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 
 `/io_control/state`、`/robot_manage/state` 和 `/robot_config/state` 每个控制周期尝试向 `RealtimePublisher` 投递最新快照，实际 DDS 发布由后台线程执行。忙时会跳过旧快照，实际话题频率可能低于 `controller_manager.update_rate`；扩展 RTDE 数据源仍为 50 Hz。
 
-实时控制、RTDE 状态、IO、Payload、TCP offset 与拖动示教仍收敛在 `AuboHardwareInterface` 和 ros2_control controllers。机器人上电、启动、断电、松刹车、解除保护停等生命周期能力由 `dashboard_client` 通过 9012 WebSocket JSON-RPC 提供；这些操作可能改变机器人运行状态。进入 Servo 会话前状态不就绪时驱动会暂停输出；已进入会话后离开可运动状态或触发通信保护时，会锁存故障并拒绝继续旧会话。状态恢复不会自动清除故障，需要按实际硬件生命周期显式恢复，再提交新轨迹。`aubo_controllers` 不连接 SDK，也不订阅 RTDE。`controller_stopper` 只根据 `/robot_manage/state` 编排运动控制器启停。
+实时控制、RTDE 状态、IO、Payload、TCP offset 与拖动示教仍收敛在 `AuboHardwareInterface` 和 ros2_control controllers。机器人上电、启动、断电、松刹车、解除保护停等生命周期能力由 `dashboard_client` 通过 9012 WebSocket JSON-RPC 提供；这些操作可能改变机器人运行状态。非 Running/Normal（或 ReducedMode）状态下暂停输出，状态恢复且反馈新鲜后自动重新进入 Servo；恢复首周期将位置命令同步到反馈、速度命令清零。位置控制反馈超过 100 ms 时暂停，持续缺失至少 1 s 才锁存通信故障；短时反馈超时、会话拒绝（-13）及调用间隔或 RPC 耗时达到 5*t 时暂停并重建会话，不重发旧目标。SDK 返回 207～212（保护停、急停、运行或安全模式不满足）也按安全状态暂停处理，等待拒绝之后的新鲜 Running/Normal（或 ReducedMode）反馈，不因缓存的就绪状态立即重发。驱动不会自动解除保护停、清除柜端故障、上电或松刹车。会话重建或 RPC 异常在 1 秒内未获得一次及时成功的 servoJoint 回复，或 servoJoint 错误预算耗尽时仍锁存故障，需要显式停用/激活硬件恢复。`aubo_controllers` 不连接 SDK，也不订阅 RTDE。`controller_stopper` 只根据 `/robot_manage/state` 编排运动控制器启停。
+
+默认 `joint_trajectory_controller` 使用 `aubo_controllers/AuboJointTrajectoryController`，在 Humble 标准 JTC 上增加 `motion_status/execution_state` 状态接口（0=就绪，1=暂停，2=锁存故障）。安全暂停、反馈不可用或硬件故障会使当前 FollowJointTrajectory action 返回 `ABORTED` 和非零错误码，不会报告轨迹成功；恢复后须提交新轨迹，旧目标不自动续跑。硬件错误状态在 SDK 清理后仍保留，避免 Humble controller manager 未把 write 错误传给 action 而产生误报。自定义控制器 YAML 也需选择上述插件；若仍使用标准 JTC，则没有这项状态联动。
+
+默认六轴目标位置容差为 0.01 rad，停止速度容差为 0.02 rad/s，轨迹结束后最多等待 0.5 秒到位。位置未到目标时不能只因轨迹时间结束而判为成功；真机跟踪精度仍需现场验收。
+
+纯 mock 回归可执行（启动独立 ROS domain 的 mock 驱动，通过 mock GPIO 注入暂停/故障，不连接 SDK）：
+
+```bash
+python3 src/aubo_ros2_driver/aubo_ros2_driver/test/check_mock_motion_actions.py
+```
 
 查看当前 IO 状态：
 

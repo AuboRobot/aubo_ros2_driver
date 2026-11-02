@@ -5,9 +5,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from aubo_ros2_driver.control_profile import resolve_update_rate, resolve_servo_period
 
 class Profiles(unittest.TestCase):
-    def test_auto_es_and_calibrated(self):
+    def test_auto_preserves_yaml_for_es_and_calibrated(self):
         for model in ('aubo_ES3','aubo_ES5','aubo_ES3_calibrated'):
-            self.assertEqual(resolve_update_rate(model,'auto','',200),100)
+            self.assertEqual(resolve_update_rate(model,'auto','',200),200)
     def test_auto_preserves_non_es_yaml(self):
         self.assertEqual(resolve_update_rate('aubo_i5','auto','',125),125)
     def test_explicit_controller_family_overrides_arm_model(self):

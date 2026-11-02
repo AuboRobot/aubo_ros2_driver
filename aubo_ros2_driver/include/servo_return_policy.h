@@ -6,8 +6,14 @@ namespace aubo_driver {
 // 2/3 are tolerated temporarily, but do not acknowledge a new target.
 class ServoReturnPolicy {
 public:
+    // SDK 207..212: protective/emergency stop, wrong robot/safety mode,
+    // or not Running. These pause output until fresh ready-state feedback.
+    static bool requiresSafetyPause(int result) {
+        return result >= 207 && result <= 212;
+    }
     bool observe(int result, std::int64_t now_ns) {
         if (fault_) return false;
+        if (requiresSafetyPause(result)) { reset(); return true; }
         if (result == 0) { invalid_since_ = -1; busy_since_ = -1; return true; }
         if (result != -5 && result != 2 && result != 3) {
             fault_ = true;

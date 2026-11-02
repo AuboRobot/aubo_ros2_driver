@@ -96,7 +96,12 @@ public:
     void configSubscribe(RtdeClientPtr cli);
 
 private:
+    friend class AuboHardwareInterfaceRecoveryTest;
     void disconnectClients();
+    void pauseServoSession();
+    int retryServoSession(const char *reason);
+    int processServoResult(int result, std::int64_t now_ns);
+    void refreshMotionStatus();
     hardware_interface::return_type latchServoFault(const char *reason);
     bool connectRpcClient();
     bool connectRtdeClient();
@@ -123,6 +128,7 @@ private:
     bool servo_fault_latched_{ false };
     bool servo_mode_pending_{ false };
     std::chrono::steady_clock::time_point servo_mode_deadline_{};
+    std::chrono::steady_clock::time_point servo_recovery_since_{};
     ServoReturnPolicy servo_return_policy_;
     std::chrono::steady_clock::time_point last_motion_feedback_{};
     std::chrono::steady_clock::time_point last_servo_attempt_{};
@@ -133,6 +139,10 @@ private:
     double servo_period_s_{0.01};
     bool initialized_{ false };
     bool motion_command_paused_{ false };
+    // Public state interface protocol: 0=ready, 1=paused, 2=latched fault.
+    double motion_execution_state_{1.0};
+    bool safety_return_pause_{false};
+    std::chrono::steady_clock::time_point safety_return_feedback_{};
 
     std::atomic<bool> robot_program_running_;
     std::atomic<bool> controller_reset_necessary_{ false };

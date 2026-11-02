@@ -6,6 +6,17 @@ namespace aubo_driver {
 namespace {
 constexpr std::int64_t kMs = 1000000;
 
+TEST(ServoReturnPolicy, SafetyStateRejectionsDoNotLatch)
+{
+    for (int result : {207, 208, 209, 210, 211, 212}) {
+        ServoReturnPolicy policy;
+        EXPECT_TRUE(policy.observe(result, 0)) << result;
+        EXPECT_TRUE(policy.observe(result, 10'000 * kMs)) << result;
+        EXPECT_FALSE(policy.faulted()) << result;
+        EXPECT_TRUE(policy.observe(0, 10'001 * kMs));
+    }
+}
+
 TEST(ServoReturnPolicy, RejectedSessionLatchesUntilExplicitReset)
 {
     ServoReturnPolicy policy;
@@ -76,7 +87,7 @@ TEST(ServoReturnPolicy, ResetClearsPendingWindows)
 
 TEST(ServoReturnPolicy, UnexpectedResultsImmediatelyLatch)
 {
-    for (int result : {-1, -4, -18, -22, 1, 4, 211}) {
+    for (int result : {-1, -4, -18, -22, 1, 4, 217}) {
         ServoReturnPolicy policy;
         EXPECT_FALSE(policy.observe(result, 0)) << result;
         EXPECT_TRUE(policy.faulted()) << result;
