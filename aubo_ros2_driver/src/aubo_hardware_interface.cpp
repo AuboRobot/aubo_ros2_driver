@@ -2,6 +2,7 @@
 #include <pluginlib/class_list_macros.hpp>
 #include "rclcpp/rclcpp.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
+#include <exception>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -9,11 +10,12 @@
 #include <ctime>
 #include <limits>
 #include <thread>
+#include <iostream>
 namespace aubo_driver {
 
 AuboHardwareInterface::~AuboHardwareInterface()
 {
-    stopServoMode();
+    disconnectClients();
 }
 
 bool AuboHardwareInterface::connectRpcClient()
@@ -320,21 +322,14 @@ bool AuboHardwareInterface::OnActive()
         return false;
     }
 
-    int topic = rtde_client_->setTopic(false, { "R1_message" }, 200, 0);
-    if (topic < 0) {
-        std::cout << "Set topic fail!" << std::endl;
-    }
-    rtde_client_->subscribe(topic, [](InputParser &parser) {
-        parser.popRobotMsgVector();
-    });
+    // 连接/激活只建立 RPC 与 RTDE，不在此上电，也不解除防护停止。
     rpc_client_->getRobotInterface(robot_name_)
     ->getRobotConfig()
     ->setHardwareCustomParameters("[joint_func] \n vff_enable = false\n");
 
     std::cout << "vff_enable = false" << std::endl;
 
-    // 设置rtde输入
-    setInput(rtde_client_);
+    // Do not write the SDK example register values on a real robot.
 
     // 配置输出
     configSubscribe(rtde_client_);
@@ -362,7 +357,10 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
     if (servo_mode_param != info_.hardware_parameters.end() &&
         !servo_mode_param->second.empty()) {
         try {
-            servo_mode_ = std::stoi(servo_mode_param->second);
+            std::size_t used = 0;
+            servo_mode_ = std::stoi(servo_mode_param->second, &used);
+            if (used != servo_mode_param->second.size() || servo_mode_ < 1 || servo_mode_ > 7)
+                throw std::invalid_argument("active servo_mode must be 1..7; 0 exits Servo");
         } catch (const std::exception &e) {
             RCLCPP_FATAL(
                 rclcpp::get_logger("AuboHardwareInterface"),
@@ -371,6 +369,30 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
             return hardware_interface::CallbackReturn::ERROR;
         }
     }
+
+    try {
+        auto read_period = [this](const char *name, double fallback) {
+            auto it = info_.hardware_parameters.find(name);
+            if (it == info_.hardware_parameters.end()) return fallback;
+            std::size_t used = 0;
+            double value = std::stod(it->second, &used);
+            if (used != it->second.size() || !std::isfinite(value) || value <= 0)
+                throw std::invalid_argument(name);
+            return value;
+        };
+        control_period_s_ = read_period("control_period", 0.005);
+        servo_period_s_ = read_period("servo_period", 0.01);
+        if (servo_period_s_ < 0.002 || servo_period_s_ > 0.02 ||
+            control_period_s_ >= 5.0 * servo_period_s_)
+            throw std::invalid_argument("control/servo period outside supported watchdog budget");
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "Invalid cyclic timing: %s", e.what());
+        return hardware_interface::CallbackReturn::ERROR;
+    }
+    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+        "Cyclic timing: nominal_period_ms=%.3f servo_t_ms=%.3f watchdog_ms=%.3f",
+        control_period_s_*1000, servo_period_s_*1000, servo_period_s_*5000);
 
     if (!probeIoControlLayout()) {
         return hardware_interface::CallbackReturn::ERROR;
@@ -447,18 +469,104 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
 {
     RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
                 "Starting ...please wait...");
-    OnActive();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    readActualQ();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    if (!initialized_) {
-        //获取初始状态
-        aubo_position_commands_ = actual_q_copy_;
-        std::fill(aubo_velocity_commands_.begin(),
-                  aubo_velocity_commands_.end(), 0.0);
-        initialized_ = true;
+    try {
+        if (!OnActive()) return hardware_interface::CallbackReturn::ERROR;
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "Hardware activation failed: %s", e.what());
+        disconnectClients();
+        return hardware_interface::CallbackReturn::ERROR;
     }
+    // Activation is outside the cyclic write path. Require real feedback before
+    // seeding commands; zero-filled startup buffers are not measured positions.
+    bool ready = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+        {
+            std::lock_guard<std::mutex> lock(rtde_mtx_);
+            ready = last_motion_feedback_.time_since_epoch().count() != 0 &&
+                std::chrono::steady_clock::now() - last_motion_feedback_ <
+                    std::chrono::milliseconds(100) &&
+                std::all_of(joint_velocity_.begin(), joint_velocity_.end(),
+                    [](double v) { return std::isfinite(v) && std::abs(v) < 0.02; });
+        }
+        if (ready) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (!ready) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                     "Activation requires fresh RTDE feedback and a stationary robot.");
+        disconnectClients();
+        return hardware_interface::CallbackReturn::ERROR;
+    }
+    // Clear residual cabinet mode only during explicit lifecycle activation.
+    if (stopServoMode() != 0) {
+        disconnectClients();
+        return hardware_interface::CallbackReturn::ERROR;
+    }
+    {
+        std::lock_guard<std::mutex> lock(rtde_mtx_);
+        ready = last_motion_feedback_.time_since_epoch().count() != 0 &&
+            std::chrono::steady_clock::now() - last_motion_feedback_ <
+                std::chrono::milliseconds(100) &&
+            std::all_of(joint_velocity_.begin(), joint_velocity_.end(),
+                [](double v) { return std::isfinite(v) && std::abs(v) < 0.02; });
+        if (ready) std::copy(actual_q_.begin(), actual_q_.end(), aubo_position_commands_.begin());
+    }
+    if (!ready) {
+        disconnectClients();
+        return hardware_interface::CallbackReturn::ERROR;
+    }
+    servo_fault_latched_ = false;
+    motion_execution_state_ = 0.0;
+    safety_return_pause_ = false;
+    motion_command_paused_ = false;
+    servo_recovery_since_ = {};
+    servo_mode_pending_ = false;
+    initialized_ = true;
+    servo_return_policy_.reset();
+    last_servo_attempt_ = {};
+    last_servo_report_ = {};
+    readActualQ();
+
+    std::fill(aubo_velocity_commands_.begin(), aubo_velocity_commands_.end(), 0.0);
+    return hardware_interface::CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_deactivate(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    disconnectClients();
+    initialized_ = false;
+    return hardware_interface::CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_cleanup(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    disconnectClients();
+    initialized_ = false;
+    return hardware_interface::CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_shutdown(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    disconnectClients();
+    initialized_ = false;
+    return hardware_interface::CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_error(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    motion_execution_state_ = 2.0;
+    disconnectClients();
+    initialized_ = false;
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -466,6 +574,7 @@ std::vector<hardware_interface::StateInterface>
 AuboHardwareInterface::export_state_interfaces()
 {
     std::vector<hardware_interface::StateInterface> state_interfaces;
+    state_interfaces.emplace_back("motion_status", "execution_state", &motion_execution_state_);
     auto export_indexed_state = [&state_interfaces](
                                     const std::string &component_name,
                                     const std::string &interface_prefix,
@@ -733,6 +842,7 @@ hardware_interface::return_type AuboHardwareInterface::read(
     const rclcpp::Time &time, const rclcpp::Duration &period)
 {
     readActualQ();
+    refreshMotionStatus();
     if (!initialized_) {
         //获取初始状态
         aubo_position_commands_ = actual_q_copy_;
@@ -745,9 +855,11 @@ hardware_interface::return_type AuboHardwareInterface::read(
 hardware_interface::return_type AuboHardwareInterface::write(
     const rclcpp::Time &time, const rclcpp::Duration &period)
 {
+    if (servo_fault_latched_) return hardware_interface::return_type::ERROR;
     checkAsyncSdkCommands();
 
     if (handguide_mode_active_.load()) {
+        motion_execution_state_ = 1.0;
         return hardware_interface::return_type::OK;
     }
 
@@ -758,30 +870,47 @@ hardware_interface::return_type AuboHardwareInterface::write(
     const bool motion_controller_running =
         velocity_controller_running || position_controller_running;
 
-    if (robot_mode_ != RobotModeType::Running ||
-        (safety_mode_ != SafetyModeType::Normal &&
-         safety_mode_ != SafetyModeType::ReducedMode)) {
-        if (servo_mode_start_) {
-            RCLCPP_INFO(
-                rclcpp::get_logger("AuboHardwareInterface"),
-                "Robot left motion-ready state. Local servo mode state is "
-                "invalidated.");
-        }
-        servo_mode_start_ = false;
+    RobotModeType robot_mode;
+    SafetyModeType safety_mode;
+    bool feedback_fresh;
+    bool feedback_failed;
+    bool awaiting_safety_feedback;
+    {
+        std::lock_guard<std::mutex> lock(rtde_mtx_);
+        robot_mode = robot_mode_;
+        safety_mode = safety_mode_;
+        awaiting_safety_feedback = safety_return_pause_ &&
+            last_motion_feedback_ <= safety_return_feedback_;
+        feedback_failed = last_motion_feedback_.time_since_epoch().count() != 0 &&
+            std::chrono::steady_clock::now() - last_motion_feedback_ >=
+                std::chrono::seconds(1);
+        feedback_fresh = last_motion_feedback_.time_since_epoch().count() != 0 &&
+            std::chrono::steady_clock::now() - last_motion_feedback_ <
+                std::chrono::milliseconds(100);
+    }
+    if (position_controller_running && feedback_failed)
+        return latchServoFault("RTDE motion feedback missing for at least 1 s");
+    if (awaiting_safety_feedback || (position_controller_running && !feedback_fresh) || robot_mode != RobotModeType::Running ||
+        (safety_mode != SafetyModeType::Normal &&
+         safety_mode != SafetyModeType::ReducedMode)) {
+        const bool was_paused = motion_command_paused_;
+        pauseServoSession();
+        servo_recovery_since_ = {};
 
-        if (motion_controller_running && !motion_command_paused_) {
+        if (motion_controller_running && !was_paused) {
             RCLCPP_WARN_STREAM(
                 rclcpp::get_logger("AuboHardwareInterface"),
-                "Motion command paused until robot is running and safety "
+                "Motion command paused until feedback is fresh, robot is running and safety "
                 "state is normal or reduced. robot_mode_: "
-                    << static_cast<int>(robot_mode_)
-                    << ", safety_mode_: " << static_cast<int>(safety_mode_));
+                    << static_cast<int>(robot_mode)
+                    << ", safety_mode_: " << static_cast<int>(safety_mode));
             motion_command_paused_ = true;
         }
 
         return hardware_interface::return_type::OK;
     }
 
+    safety_return_pause_ = false;
     if (motion_command_paused_ && motion_controller_running) {
         if (position_controller_running) {
             std::unique_lock<std::mutex> lck(rtde_mtx_);
@@ -802,9 +931,10 @@ hardware_interface::return_type AuboHardwareInterface::write(
             "entered again on the next motion command.");
     }
     motion_command_paused_ = false;
+    motion_execution_state_ = 0.0;
 
     if (!velocity_controller_running && !position_controller_running) {
-        if (stopServoMode() != 0) {
+        if ((servo_mode_start_ || servo_mode_pending_) && stopServoMode() != 0) {
             return hardware_interface::return_type::ERROR;
         }
         return hardware_interface::return_type::OK;
@@ -812,17 +942,87 @@ hardware_interface::return_type AuboHardwareInterface::write(
 
     try {
         if (velocity_controller_running) {
-            speedServo(aubo_velocity_commands_);
+            // Reserved backend: unsupported velocity control is non-fatal.
+            (void)speedServo(aubo_velocity_commands_);
         } else if (position_controller_running) {
-            Servoj(aubo_position_commands_);
+            if (Servoj(aubo_position_commands_) != 0)
+                return latchServoFault("servoJoint or mode entry failed");
         }
     } catch (const std::exception &e) {
         servo_mode_start_ = false;
         RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
                      "Motion command failed: %s", e.what());
+        if (retryServoSession("motion RPC exception") != 0)
+            return latchServoFault("motion RPC exceptions persisted for at least 1 s");
     }
 
     return hardware_interface::return_type::OK;
+}
+
+void AuboHardwareInterface::refreshMotionStatus()
+{
+    // A hardware error can trigger on_error()/disconnectClients() before the
+    // next controller update. Preserve the fault state despite that cleanup.
+    if (servo_fault_latched_ || motion_execution_state_ == 2.0) return;
+    std::lock_guard<std::mutex> lock(rtde_mtx_);
+    const bool fresh = last_motion_feedback_.time_since_epoch().count() != 0 &&
+        std::chrono::steady_clock::now() - last_motion_feedback_ < std::chrono::milliseconds(100);
+    const bool ready = robot_mode_ == RobotModeType::Running &&
+        (safety_mode_ == SafetyModeType::Normal || safety_mode_ == SafetyModeType::ReducedMode);
+    motion_execution_state_ = (!fresh || !ready || motion_command_paused_ ||
+        safety_return_pause_ || handguide_mode_active_.load()) ? 1.0 : 0.0;
+}
+
+int AuboHardwareInterface::processServoResult(int result, std::int64_t now_ns)
+{
+    if (ServoReturnPolicy::requiresSafetyPause(result)) {
+        if (!safety_return_pause_) {
+            RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
+                "Servo safety-state rejection %d; output paused until fresh ready feedback.", result);
+        }
+        pauseServoSession();
+        safety_return_pause_ = true;
+        servo_recovery_since_ = {};
+        std::lock_guard<std::mutex> lock(rtde_mtx_);
+        safety_return_feedback_ = last_motion_feedback_;
+        return 0;
+    }
+    return servo_return_policy_.observe(result, now_ns) ? 0 : -1;
+}
+
+void AuboHardwareInterface::pauseServoSession()
+{
+    servo_mode_start_ = false;
+    servo_mode_pending_ = false;
+    last_servo_attempt_ = {};
+    servo_return_policy_.reset();
+    motion_command_paused_ = true;
+    motion_execution_state_ = 1.0;
+}
+
+int AuboHardwareInterface::retryServoSession(const char *reason)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (servo_recovery_since_.time_since_epoch().count() == 0) {
+        servo_recovery_since_ = now;
+        RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
+                    "Pausing servo session: %s; retrying with fresh ready feedback.", reason);
+    }
+    pauseServoSession();
+    return now - servo_recovery_since_ >= std::chrono::seconds(1) ? -1 : 0;
+}
+
+hardware_interface::return_type AuboHardwareInterface::latchServoFault(const char *reason)
+{
+    if (!servo_fault_latched_) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "Servo fault latched: %s. Motion is rejected until explicit hardware "
+            "deactivation/activation with fresh stationary feedback.", reason);
+    }
+    servo_fault_latched_ = true;
+    motion_execution_state_ = 2.0;
+    // Keep mode ownership until lifecycle cleanup can explicitly disable it.
+    return hardware_interface::return_type::ERROR;
 }
 
 void AuboHardwareInterface::readActualQ()
@@ -884,32 +1084,42 @@ bool AuboHardwareInterface::isServoModeStart()
 }
 int AuboHardwareInterface::startServoMode()
 {
-    if (!rpc_client_ || robot_name_.empty()) {
-        return -1;
-    }
+    if (servo_fault_latched_ || !rpc_client_ || robot_name_.empty()) return -1;
+    if (servo_mode_start_) return 0;
 
     try {
         auto motion_control =
             rpc_client_->getRobotInterface(robot_name_)->getMotionControl();
-        if (servo_mode_start_ &&
-            motion_control->getServoModeSelect() == servo_mode_) {
-            return 0;
-        }
-
-        //开启servo模式
-        motion_control->setServoModeSelect(servo_mode_);
-        int i = 0;
-        while (motion_control->getServoModeSelect() != servo_mode_) {
-            if (i++ > 5) {
+        // Mode entry progresses over cycles; never sleep in write().
+        const auto now = std::chrono::steady_clock::now();
+        if (!servo_mode_pending_) {
+            const int result = motion_control->setServoModeSelect(servo_mode_);
+            if (ServoReturnPolicy::requiresSafetyPause(result)) {
+                processServoResult(result, 0);
+                return 1;
+            }
+            if (result != 0) {
                 RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
-                             "Servo mode enable failed. Current servo mode is "
-                             "%d.",
-                             motion_control->getServoModeSelect());
-                servo_mode_start_ = false;
+                    "setServoModeSelect returned %d", result);
                 return -1;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            servo_mode_pending_ = true;
+            servo_mode_deadline_ = now + std::chrono::milliseconds(150);
+            return 1;
         }
+        if (now >= servo_mode_deadline_) {
+            RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                "Servo mode entry timed out before query; pausing for recovery.");
+            return -1;
+        }
+        const int selected = motion_control->getServoModeSelect();
+        if (std::chrono::steady_clock::now() >= servo_mode_deadline_) {
+            RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+                "Servo mode entry reply arrived after deadline; pausing for recovery.");
+            return -1;
+        }
+        if (selected != servo_mode_) return 1;
+        servo_mode_pending_ = false;
     } catch (const std::exception &e) {
         servo_mode_start_ = false;
         RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
@@ -939,6 +1149,8 @@ int AuboHardwareInterface::stopServoMode()
 
         if (selected_servo_mode == 0) {
             servo_mode_start_ = false;
+            servo_mode_pending_ = false;
+            last_servo_attempt_ = {};
             return 0;
         }
 
@@ -977,41 +1189,67 @@ int AuboHardwareInterface::stopServoMode()
     RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
                 "Servo mode disabled.");
     servo_mode_start_ = false;
+    servo_mode_pending_ = false;
+    last_servo_attempt_ = {};
     return 0;
 }
 
 int AuboHardwareInterface::Servoj(
     const std::array<double, 6> joint_position_command)
 {
-    if (startServoMode() != 0) {
-        return -1;
-    }
+    const int mode_result = startServoMode();
+    if (mode_result < 0) return retryServoSession("servo mode entry failed");
+    if (mode_result > 0) return 0; // Entry pending; no trajectory point queued.
 
-    std::vector<double> traj(6, 0);
-    for (size_t i = 0; i < traj.size(); i++) {
-        traj[i] = joint_position_command[i];
+    if (!std::all_of(joint_position_command.begin(), joint_position_command.end(),
+                     [](double q) { return std::isfinite(q); })) return -1;
+    std::copy(joint_position_command.begin(), joint_position_command.end(), servo_target_.begin());
+    const auto begin = std::chrono::steady_clock::now();
+    const double gap_ms = last_servo_attempt_.time_since_epoch().count() == 0 ? 0.0 :
+        std::chrono::duration<double, std::milli>(begin - last_servo_attempt_).count();
+    if (gap_ms >= 5000.0 * servo_period_s_) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "Servo attempt gap %.3f ms reached 5*t; pausing session.", gap_ms);
+        return retryServoSession("servo attempt gap reached 5*t");
     }
-
-    // 接口调用: servoJoint
-    while (true) {
-        int servoJoint_num = rpc_client_->getRobotInterface(robot_name_)
-                                ->getMotionControl()
-                                ->servoJoint(traj, 0.2, 0.2, 0.01, 0.1, 200);
-        if(servoJoint_num != 2){
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    last_servo_attempt_ = begin;
+    // One attempt per cycle. QUEUE_FULL/BUSY never sleep or replay an old target.
+    const int result = rpc_client_->getRobotInterface(robot_name_)
+        ->getMotionControl()->servoJoint(servo_target_, 0.2, 0.2, servo_period_s_, 0.1, 200);
+    const auto end = std::chrono::steady_clock::now();
+    const double rpc_ms = std::chrono::duration<double, std::milli>(end - begin).count();
+    // A rejected session can follow a recoverable safety stop or mode exit.
+    // Re-enter only on a later cycle, after write() checks fresh ready feedback.
+    if (result == -13) return retryServoSession("servo session rejected (-13)");
+    const bool ok = processServoResult(result,
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end.time_since_epoch()).count()) == 0;
+    if (ServoReturnPolicy::requiresSafetyPause(result)) return 0;
+    if (!ok || ((result != 0 || rpc_ms > 1000.0 * control_period_s_ || gap_ms > 25.0) &&
+        (last_servo_report_.time_since_epoch().count() == 0 ||
+         end - last_servo_report_ >= std::chrono::seconds(5)))) {
+        RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
+            "servoJoint result=%d rpc_ms=%.3f attempt_gap_ms=%.3f fault=%d "
+            "(2=queue full, 3=busy; neither acknowledges this target)",
+            result, rpc_ms, gap_ms, !ok);
+        last_servo_report_ = end;
     }
-
-    return 0;
+    // A late RPC reply is not proof that the cabinet still has a live session.
+    if (rpc_ms >= 5000.0 * servo_period_s_) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "servoJoint RPC %.3f ms reached 5*t; pausing session.", rpc_ms);
+        if (!ok) return -1;
+        return retryServoSession("servoJoint reply reached 5*t");
+    }
+    if (result == 0) servo_recovery_since_ = {};
+    return ok ? 0 : -1;
 }
 
 int AuboHardwareInterface::speedServo(
     const std::array<double, 6> joint_velocity_command)
 {
     (void)joint_velocity_command;
-    RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
-                 "speedServo failed: HW_IF_VELOCITY command chain is ready, "
+    RCLCPP_WARN_ONCE(rclcpp::get_logger("AuboHardwareInterface"),
+                 "speedServo unsupported: HW_IF_VELOCITY command chain is ready, "
                  "but the speedServo backend is not implemented yet.");
 
     return -1;
@@ -1022,6 +1260,17 @@ void AuboHardwareInterface::checkAsyncSdkCommands()
     if (!rpc_client_ || robot_name_.empty()) {
         return;
     }
+    auto pending = [](double v) { return !std::isnan(v); };
+    const bool has_command =
+        pending(digital_output_trigger_command_) || pending(analog_output_trigger_command_) ||
+        pending(tool_voltage_output_domain_command_) || pending(tool_io_input_trigger_command_) ||
+        pending(tool_io_config_trigger_command_) || pending(payload_mass_command_) ||
+        pending(handguide_enable_command_) ||
+        std::any_of(tcp_offset_commands_.begin(), tcp_offset_commands_.end(), pending) ||
+        std::any_of(payload_cog_commands_.begin(), payload_cog_commands_.end(), pending) ||
+        std::any_of(handguide_free_axis_commands_.begin(), handguide_free_axis_commands_.end(), pending) ||
+        std::any_of(handguide_feature_commands_.begin(), handguide_feature_commands_.end(), pending);
+    if (!has_command) return;
     std::lock_guard<std::mutex> lock(sdk_command_mtx_);
 
     const double no_new_command = std::numeric_limits<double>::quiet_NaN();
@@ -1403,54 +1652,45 @@ void AuboHardwareInterface::checkAsyncSdkCommands()
     }
 }
 
-// 设置rtde输入
-void AuboHardwareInterface::setInput(RtdeClientPtr cli)
-{
-    // 接口调用: 发布
-    // 组合设置输入
-    cli->setTopic(
-        true,
-        { "input_bit_registers0_to_31", "input_bit_registers32_to_63",
-          "input_bit_registers64_to_127", "input_int_registers_0" },
-        1, 5);
-
-    std::vector<int> value = { 0x00ff, 0x00, 0x00, 44 };
-    cli->publish(
-        5, [value](arcs::aubo_sdk::OutputBuilder &ro) { ro.push(value); });
-
-    cli->setTopic(
-        true, { "input_float_registers_0", "input_double_registers_1" }, 1, 6);
-
-    std::vector<double> value2 = { 3.1, 4.1 };
-    cli->publish(
-        6, [value2](arcs::aubo_sdk::OutputBuilder &ro) { ro.push(value2); });
-}
 void AuboHardwareInterface::configSubscribe(RtdeClientPtr cli)
 {
-    // 接口调用: 设置 topic1
-    int topic1 = cli->setTopic(
-        false,
-        { "R1_actual_q", "R1_actual_qd", "R1_robot_mode", "R1_safety_mode",
-          "runtime_state", "line_number", "R1_actual_TCP_pose",
-          "R1_actual_TCP_speed", "R1_actual_TCP_force", "R1_actual_tool_pose",
-          "R1_standard_digital_input_bits", "R1_tool_digital_input_bits",
-          "R1_configurable_digital_input_bits",
-          "R1_standard_digital_output_bits", "R1_tool_digital_output_bits",
-          "R1_configurable_digital_output_bits",
-          "R1_standard_analog_input_values", "R1_tool_analog_input_values",
-          "R1_standard_analog_output_values", "R1_tool_analog_output_values",
-          "R1_actual_payload", "R1_tool_button_status", "R1_handle_status",
-          "R1_handle_dev_state" },
-        200, 0);
-    // 接口调用: 订阅
-    cli->subscribe(topic1, [this](InputParser &parser) {
-        std::unique_lock<std::mutex> lck(rtde_mtx_);
-        actual_q_ = parser.popVectorDouble();
-        joint_velocity_ = parser.popVectorDouble();
-        robot_mode_ = parser.popRobotModeType();
-        safety_mode_ = parser.popSafetyModeType();
-        runtime_state_ = parser.popRuntimeState();
-        line_ = parser.popInt32();
+    const int motion_topic = cli->setTopic(false,
+        {"R1_actual_q", "R1_actual_qd", "R1_robot_mode", "R1_safety_mode",
+         "runtime_state", "line_number"}, 200, 0);
+    if (motion_topic < 0) throw std::runtime_error("RTDE motion recipe rejected");
+    if (cli->subscribe(motion_topic, [this](InputParser &parser) {
+        // Parse first, commit together. Failed parsing never refreshes freshness.
+        auto q = parser.popVectorDouble();
+        auto qd = parser.popVectorDouble();
+        auto mode = parser.popRobotModeType();
+        auto safety = parser.popSafetyModeType();
+        auto runtime = parser.popRuntimeState();
+        auto line = parser.popInt32();
+        if (q.size() != 6 || qd.size() != 6 ||
+            !std::all_of(q.begin(), q.end(), [](double v) { return std::isfinite(v); }) ||
+            !std::all_of(qd.begin(), qd.end(), [](double v) { return std::isfinite(v); })) return;
+        std::lock_guard<std::mutex> lock(rtde_mtx_);
+        actual_q_ = std::move(q);
+        joint_velocity_ = std::move(qd);
+        robot_mode_ = mode;
+        safety_mode_ = safety;
+        runtime_state_ = runtime;
+        line_ = line;
+        last_motion_feedback_ = std::chrono::steady_clock::now();
+    }) != 0) throw std::runtime_error("RTDE motion subscription failed");
+    // Large TCP/IO/payload fields do not need the joint control rate.
+    const int status_topic = cli->setTopic(false,
+        {"R1_actual_TCP_pose", "R1_actual_TCP_speed", "R1_actual_TCP_force",
+         "R1_actual_tool_pose", "R1_standard_digital_input_bits",
+         "R1_tool_digital_input_bits", "R1_configurable_digital_input_bits",
+         "R1_standard_digital_output_bits", "R1_tool_digital_output_bits",
+         "R1_configurable_digital_output_bits", "R1_standard_analog_input_values",
+         "R1_tool_analog_input_values", "R1_standard_analog_output_values",
+         "R1_tool_analog_output_values", "R1_actual_payload", "R1_tool_button_status",
+         "R1_handle_status", "R1_handle_dev_state"}, 50, 1);
+    if (status_topic < 0) throw std::runtime_error("RTDE status recipe rejected");
+    if (cli->subscribe(status_topic, [this](InputParser &parser) {
+        std::lock_guard<std::mutex> lock(rtde_mtx_);
         actual_TCP_pose_ = parser.popVectorDouble();
         actual_TCP_speed_ = parser.popVectorDouble();
         actual_TCP_force_ = parser.popVectorDouble();
@@ -1475,8 +1715,42 @@ void AuboHardwareInterface::configSubscribe(RtdeClientPtr cli)
         tool_button_status_ = parser.popBool();
         handle_status_ = static_cast<std::uint64_t>(parser.popInt64());
         handle_dev_state_ = static_cast<int>(parser.popHandleStateType());
-    });
+    }) != 0) throw std::runtime_error("RTDE status subscription failed");
 }
+
+void AuboHardwareInterface::disconnectClients()
+{
+    try {
+        stopServoMode();
+    } catch (...) {
+    }
+
+    try {
+        if (rpc_client_) {
+            rpc_client_->logout();
+        }
+    } catch (...) {
+    }
+
+    try {
+        if (rtde_client_) {
+            rtde_client_->logout();
+        }
+    } catch (...) {
+    }
+
+    rpc_client_.reset();
+    rtde_client_.reset();
+    robot_name_.clear();
+    servo_mode_start_ = false;
+    servo_mode_pending_ = false;
+    position_controller_running_.store(false);
+    velocity_controller_running_.store(false);
+    motion_command_paused_ = false;
+    std::lock_guard<std::mutex> lock(rtde_mtx_);
+    last_motion_feedback_ = {};
+}
+
 } // namespace aubo_driver
 
 PLUGINLIB_EXPORT_CLASS(aubo_driver::AuboHardwareInterface,
