@@ -79,7 +79,7 @@ sudo apt install \
 `aubo_control.launch.py --show-args` 解析成功；硬件插件的 `ldd` 无缺失库，`ctypes.CDLL` 加载成功。上述为早期编译检查，当时未连接机器人。
 旧式 `on_init(HardwareInfo)` 等接口可能给出弃用警告，不影响本次构建通过。
 
-本小节仅记录早期编译和依赖检查；后续 ES3 真机结果见下文“ES 控制柜、实时性与频率验收”。Gazebo 仿真仍未验证。
+本小节仅记录早期编译和依赖检查。ES3 真机频率验收见 [ES 控制柜与频率验收](aubo_ros2_driver/docs/es_cabinet.md)。Gazebo 仿真仍未验证。
 
 ## ros2_control 内核实时性配置
 
@@ -117,7 +117,7 @@ sudo usermod -a -G realtime $(whoami)
 
 - 实时优先级范围是 0–99，数值越大优先级越高。本驱动控制环使用 50。
 - `SCHED_FIFO` 用于控制环；桌面和其他普通进程仍是 `SCHED_OTHER`。
-- 控制面与控制柜保持同一二层有线直连。FIFO 不能消除网络、SDK 或整机卡死造成的控制环停顿；柜端约 `5*t` 收不到成功 `servoJoint` 会 Automatic exit。频率与链路的验收口径见下文“ES 控制柜、实时性与频率验收”。
+- 控制面与控制柜保持同一二层有线直连。FIFO 不能消除网络、SDK 或整机卡死造成的控制环停顿；柜端约 `5*t` 收不到成功 `servoJoint` 会 Automatic exit。频率参数与验收口径见下文“控制频率与伺服周期”。ES 控制柜实测见 [ES 控制柜与频率验收](aubo_ros2_driver/docs/es_cabinet.md)。
 
 调度策略说明见 [sched(7)](https://man7.org/linux/man-pages/man7/sched.7.html)。
 
@@ -223,7 +223,7 @@ cd ~/ws_humble
 source /opt/ros/humble/setup.bash
 python3 src/aubo_ros2_driver/aubo_description/scripts/calibrate_urdf_dh.py \
   --robot-model aubo_i5 \
-  --robot-ip 192.168.127.128
+  --robot-ip 192.168.3.100
 colcon build --packages-select aubo_description
 source install/setup.bash
 ```
@@ -234,55 +234,19 @@ source install/setup.bash
 - `--robot-ip` 需要显式传入。
 - 运行前请确认当前 Python 环境可以导入 `numpy` 和 `pyaubo_sdk`。
 - 生成后需要单独重新编译 `aubo_description` 包。
+- 校准文件与具体机械臂对应，不能直接用于其他同型号机械臂。
+- 驱动和 MoveIt 都要指定 `use_calibrated:=true`，`aubo_type` 保持原始型号，无需手动添加 `_calibrated`。该参数默认 `false`；启用后缺少校准 URDF 会直接报错。MoveIt 使用 KDL 根据加载的 URDF 求解运动学。
+- 再次校准时给校准脚本传入 `--force` 可覆盖已有输出，然后执行 `colcon build --packages-select aubo_description`。重启驱动和 MoveIt，并在各终端重新 `source install/setup.bash`。启动时会按源 URDF 的更新时间刷新对应的 `.urdf.xacro`。
 
-## 使用 aubo_ES3 校准模型运行真机
+一台 ES3 的校准模型启动步骤见 [ES 控制柜与频率验收](aubo_ros2_driver/docs/es_cabinet.md)。
 
-校准文件与具体机械臂对应。本机校准文件为 `aubo_description/urdf/aubo_ES3_calibrated.urdf`；采集时该机械臂使用 `172.16.31.105`，后续同一机械臂改为有线直连 `192.168.3.100`。请勿直接用于其他同型号机械臂。
+## 控制频率与伺服周期
 
-首次使用新启动参数，或修改启动文件后，在 `~/ws_humble` 执行：
-
-```bash
-source /opt/ros/humble/setup.bash
-colcon build --packages-select aubo_description aubo_controllers aubo_ros2_driver aubo_moveit_config \
-  --cmake-args -DAMENT_CMAKE_SYMLINK_INSTALL=OFF
-source install/setup.bash
-```
-
-终端 1：启动真机驱动，加载校准模型：
-
-```bash
-cd ~/ws_humble
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch aubo_ros2_driver aubo_control.launch.py \
-  aubo_type:=aubo_ES3 robot_ip:=192.168.3.100 \
-  use_fake_hardware:=false use_calibrated:=true launch_rviz:=false \
-  controller_profile:=es servo_period:=auto servo_mode:=1
-```
-
-终端 2：启动 MoveIt 和 RViz，加载相同校准模型：
-
-```bash
-cd ~/ws_humble
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch aubo_moveit_config aubo_moveit.launch.py \
-  aubo_type:=aubo_ES3 use_calibrated:=true
-```
-
-两个入口都必须指定 `use_calibrated:=true`，`aubo_type` 保持原始型号，无需手动添加 `_calibrated`。该参数默认 `false`，保持已有启动方式；启用后缺少校准 URDF 会直接报错。MoveIt 使用 KDL 根据加载的 URDF 求解运动学。
-
-再次校准时，给校准脚本传入 `--force` 可覆盖已有输出，然后执行 `colcon build --packages-select aubo_description`。重启驱动和 MoveIt，并在各终端重新 `source install/setup.bash`，使两者使用最新模型。启动时会按源 URDF 的更新时间刷新对应的 `.urdf.xacro`。
-
-## ES 控制柜、实时性与频率验收
-
-本节基于 2026-10-29 的 AGX Orin → ES3 有线直连实测，柜端设备树确认为 RK3568 / Forlinx OK3568-C。ROS 主机是 ARM 或 x86，不能据此推断远端控制柜的性能。以下频率结论只适用于本次柜体、固件和负载，不直接推广到其他 ES 或 x86 控制柜。
-
-### 参数与默认值
+这些参数适用于全系列。`auto` 不按型号名切换频率。
 
 | 参数 | 默认值 | 行为 |
 | --- | --- | --- |
-| `controller_profile` | `auto` | 所有型号沿用控制器 YAML，不按型号名切换频率；`es` 显式选 100 Hz，`legacy` 选 200 Hz，`custom` 沿用 YAML |
+| `controller_profile` | `auto` | 所有型号沿用控制器 YAML；`es` 显式选 100 Hz，`legacy` 选 200 Hz，`custom` 沿用 YAML |
 | `update_rate` | 空 | 显式指定时覆盖 profile，支持 25～500 Hz；这是控制器管理器的目标频率，不是硬实时保证 |
 | `servo_period` | `0.01` | SDK `servoJoint` 的执行时间 `t`，单位秒；显式设置 `auto` 时按 `1/update_rate` 计算 |
 | `servo_mode` | `1` | 进入的伺服模式；允许传入 SDK 定义的 1～7，柜端实际支持情况需另确认；0 仅供内部退出使用 |
@@ -295,44 +259,13 @@ SDK 建议 `t` 与连续调用 `servoJoint` 的间隔一致。修改频率时可
 ros2 param get /controller_manager update_rate
 ```
 
-### 本次推荐候选：110 Hz 配对执行时间
-
-ES 的 100 Hz 配置通过 `controller_profile:=es` 显式选择；本次这台柜体可显式采用以下已经过短时联合验收的配置：
-
-```bash
-cd ~/ws_humble
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch aubo_ros2_driver aubo_control.launch.py \
-  aubo_type:=aubo_ES3 robot_ip:=192.168.3.100 \
-  use_fake_hardware:=false use_calibrated:=true launch_rviz:=false \
-  controller_profile:=es update_rate:=110 servo_period:=auto servo_mode:=1
-```
-
-`110 Hz / t≈0.009090909 s / mode=1` 的实测结果：
-
-| 项目 | 结果 |
-| --- | --- |
-| 有效观察窗口 | 约 180 秒，包含 wrist3 的 0.005 rad / 8 秒往返轨迹 |
-| Servo 调用 | 19819 次，其中 1 次返回队列满 2，约 0.00505% |
-| 超周期 | 1 条日志，记录循环约 10.89 ms |
-| 柜端调用日志最大间隔 | 约 18.06 ms，低于本配置 `5*t≈45.45 ms` |
-| 运行期退出 / 故障锁存 / RTDE 解析异常 | 均未出现 |
-| 小轨迹结果 | 成功；反馈最大跟踪误差约 0.000449 rad，返回起点最大误差约 0.0000037 rad |
-
-该组合通过本次“实际运行”判据，未通过“零超周期、零队列满”严格判据。它比 100 Hz 提高了 10%，但不是全局最优值或未来零故障保证；反馈误差也只是本次采样结果，不是完整工作空间的误差上界。
-
-初筛中 120～124 Hz 的短时待机通过，不能代替联合验收：124 Hz 固定 `t=.01` 延长后出现队列满和超周期；120 Hz 自动配对时曾遇到约 40.8 ms RPC 长尾，触发缩短后的本地看门狗预算，工具停止该轮且未执行轨迹。不要只根据待机“没有掉线”提高频率。
-
-详细结果见本工作区的[控制频率搜索与工具收敛报告](../../log/控制频率搜索与工具收敛报告.md)及[110 Hz 运行判据复核](../../log/rate110_matched_confirmation_20261029/runtime_assessment.json)。这些是本地测量产物，不随单独克隆驱动仓库提供。
-
-### 实时性改动与验收口径
+实时路径：
 
 - 辅助控制器依次加载，运动控制器最后激活；前置 spawner 失败则结束启动。
 - IO、robot_manage、robot_config 状态通过 `RealtimePublisher.tryPublish` 交给后台线程发布，复用消息缓存；发布忙时跳过旧快照。
 - 运动周期内不逐次查询伺服模式，队列满时不循环休眠重试；保留返回码时间预算和故障锁存。
 - 关节/模式 RTDE 为 200 Hz，TCP、IO、payload 等扩展状态为 50 Hz；这与控制器管理器的目标频率是不同设置。
-- 真实 IO / 配置命令仍同步执行，SDK 单次 RPC 仍可能阻塞；本次没有覆盖这些服务与运动并发的负载。
+- 真实 IO / 配置命令仍同步执行，SDK 单次 RPC 仍可能阻塞。
 
 工程验收区分两层：
 
@@ -341,15 +274,15 @@ ros2 launch aubo_ros2_driver aubo_control.launch.py \
 | `strict` | 要求观测窗口内零超周期、零队列满，用于比较周期确定性 |
 | `runtime` | 允许少量超周期及暂时返回 2/3，重点检查 Servo 连续、无故障/运行期自动退出、反馈完整，并验证所请求轨迹成功 |
 
-`5*t` 不退出是运行底线，不能单独证明轨迹跟踪合格。队列满不表示新目标被接受，仍需同时检查返回码、指令间隔和轨迹误差。当前 `5*t` 策略以模式 1 的现场记录为依据，其他模式需核对柜端语义。上述判据不会关闭警告、放宽轨迹容差或取消故障保护。
+`5*t` 不退出是运行底线，不能单独证明轨迹跟踪合格。队列满不表示新目标被接受，仍需同时检查返回码、指令间隔和轨迹误差。上述判据不会关闭警告、放宽轨迹容差或取消故障保护。伺服模式取值见下文“伺服模式参数”。
 
-本机已确认 RT 内核及控制线程 `FF / priority 50`，但 FIFO 调度不能消除网络、SDK 或柜端的阻塞。校准版 ES3 的微幅单轴验证不代表高负载、多轴轨迹、全部 IO 功能或 x86 控制柜已验收。FIFO file capability 与 `ld.so.conf` 的配置见上文“ros2_control 内核实时性配置”。
+ES 控制柜的实测频率、110 Hz 候选和单台校准启动步骤见 [ES 控制柜与频率验收](aubo_ros2_driver/docs/es_cabinet.md)。该结论只适用于文中记录的柜体、固件和负载。
 
 ## 驱动真实机械臂 aubo_i5（修改机器人对应 `robot_ip`、`aubo_type`）
 
 ```bash
 source install/setup.bash
-ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:=192.168.127.128 \
+ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:=192.168.3.100 \
   use_fake_hardware:=false
 ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 ```
@@ -360,7 +293,7 @@ ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 
 驱动在运动控制器下发 `position` 关节目标时进入 SDK 伺服运动模式，用于持续执行 `servoJoint` 控制；运动控制器停止后会退出伺服模式。本驱动使用 `MotionControl.setServoModeSelect()` / `getServoModeSelect()` 进入和确认伺服模式，不再使用旧的 `setServoMode(true/false)` 接口。
 
-`aubo_control.launch.py` 通过 `servo_mode` → Xacro → hardware 参数传递进入模式，默认值为 `1`。此前参数未写入 hardware 的链路缺口已修复；本次真机结果全部由日志确认实际为模式 1。其他模式仅验证参数传递，尚未进行运动对照。
+`aubo_control.launch.py` 通过 `servo_mode` → Xacro → hardware 参数传递进入模式，默认值为 `1`。此前参数未写入 hardware 的链路缺口已修复。已有运动记录确认的是模式 1，见 [ES 控制柜与频率验收](aubo_ros2_driver/docs/es_cabinet.md)。其他模式仅验证参数传递，尚未进行运动对照。
 
 `common_interface` 中定义的取值如下：
 
@@ -385,6 +318,28 @@ ros2 launch aubo_moveit_config aubo_moveit.launch.py aubo_type:=aubo_i5
 不同控制器和 SDK 版本对模式支持可能存在差异，实际可用取值请以当前控制器配套 SDK 文档为准。
 
 当前运动命令链路支持 `position` command interface。`velocity` 仅保留接口占位，`speedServo()` 后端尚未实现；调用时仅提示一次不支持，不发送速度命令、不锁存硬件故障，也不代表速度控制成功。当前不可用于真机速度控制。
+
+### 碰撞或安全暂停后的 ROS 恢复
+
+2026-11-02 已在 ES3 真机验证：保持 ROS 驱动运行，碰撞中断后由操作者完成手动上电、启动及必要的安全状态恢复，驱动会自动重新进入原配置的 Servo 模式，随后可提交新轨迹继续运动。该流程无需 `Ctrl+C` 重启驱动，也无需手动 switch mode 切换 Servo。现场记录见 [ES3 碰撞后恢复验证](aubo_ros2_driver/docs/es_cabinet.md#碰撞后手动恢复与-ros-自动重入-servo2026-11-02)。
+
+操作顺序：
+
+1. 碰撞或安全状态变化后，保留 ROS 驱动进程。当前轨迹被中止，MoveIt/action 返回 `ABORTED`。
+2. 在控制柜或示教器上按现场流程解除相应安全状态；若机器人已断电，手动上电并启动、松刹车，直到进入 `Running`，且安全状态为 `Normal` 或 `ReducedMode`。仅完成上电、仍处于 `PowerOn` 或 `Idle` 时不会恢复 Servo。
+3. 等待驱动获得新鲜 RTDE 反馈并打印以下恢复日志；`servo_mode:=1` 时应看到 `Servo mode select 1 enabled.`，其他模式按原配置恢复。
+4. 重新规划或提交新轨迹。碰撞前已中止的旧轨迹不会续跑。
+
+```text
+Robot returned to motion-ready state. Servo mode will be entered again on the next motion command.
+Servo mode select 1 enabled.
+```
+
+ROS 控制循环按 `read → controller update → write` 执行：硬件接口读取 RTDE 状态，通过 `motion_status/execution_state` 暴露就绪、暂停或锁存故障；`AuboJointTrajectoryController` 在暂停/故障时先中止当前 action，避免继续报告成功；硬件 `write()` 在未就绪时暂停发送运动命令。SDK 207～212 的安全状态拒绝也会触发暂停，并等待拒绝之后的新反馈，覆盖 RPC 返回值早于 RTDE 状态更新的情况。
+
+当运行模式、安全状态和反馈均满足条件，且位置控制器仍激活时，`write()` 将位置命令同步到当前关节反馈、清零速度命令，再调用 `setServoModeSelect(servo_mode)` 重建会话并保持当前位置；该过程无需等待用户提交新轨迹才开始。驱动不会替操作者上电、清除柜端故障或解除保护停。
+
+上述流程适用于安全暂停且 SDK 通信仍可用的情况。如果日志出现 `Servo fault latched`，持续通信/Servo 故障已被锁存，单独上电或 switch mode 不能清除它，需要恢复硬件生命周期或重启驱动。若位置控制器已被外部停用，则需先重新激活该控制器。
 
 ### IO、配置与拖动示教
 
@@ -523,7 +478,7 @@ ros2 service call /robot_manage/unlock_protective_stop std_srvs/srv/Trigger {}
 
 ```bash
 source install/setup.bash
-ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:=192.168.127.128 \
+ros2 launch aubo_ros2_driver aubo_control.launch.py aubo_type:=aubo_i5 robot_ip:=192.168.3.100 \
   use_fake_hardware:=false
 ros2 launch ros_joints_plan joints_plan.launch.py aubo_type:=aubo_i5
 ```
@@ -539,7 +494,7 @@ ros2 launch ros_joints_plan joints_plan.launch.py aubo_type:=aubo_i5
 
 ```bash
 source install/setup.bash
-ros2 launch aubo_ros2_driver dashboard_client.launch.py robot_ip:=127.0.0.1 port:=9012 log_level:=info
+ros2 launch aubo_ros2_driver dashboard_client.launch.py robot_ip:=192.168.3.100 port:=9012 log_level:=info
 ```
 
 ## 独立 Topic 命令节点
@@ -548,7 +503,7 @@ ros2 launch aubo_ros2_driver dashboard_client.launch.py robot_ip:=127.0.0.1 port
 
 ```bash
 source install/setup.bash
-ros2 launch aubo_ros2_driver aubo_command.launch.py robot_ip:=192.168.127.128
+ros2 launch aubo_ros2_driver aubo_command.launch.py robot_ip:=192.168.3.100
 ```
 
 命令 Topic：
