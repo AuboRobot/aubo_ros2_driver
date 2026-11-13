@@ -1,5 +1,31 @@
 # 变更记录
 
+## 未发布（2026-11-13）
+
+### 修复
+
+- 进入拖动示教改为和双臂 TEACH 一样：先退出伺服，再调用 `RobotManage.freedrive(true)`，并轮询 `isFreedriveEnabled()` 或 `isHandguideEnabled()`。柜端没有确认前，不再把本地拖动状态写成已开启，也不会停掉后续伺服输出。退出时调用 `freedrive(false)`，同样等到标志清除。
+- 2026-11-13 真机复测：伺服还在时 `freedrive(true)` 返回 0，但 250 ms 内标志仍为 false，驱动随即重新进入伺服。先停掉 `joint_trajectory_controller` 后再调用，约 0.2 s 后 `isFreedriveEnabled` 与 `isHandguideEnabled` 都为 true，`getRobotControlMode` 为 `Freedrive`。确认等待改为伺服退出后再等 100 ms，之后最多 2 s。服务等待改为 8 s。
+
+- 机械臂未上电时启动驱动，`aubo_ros2_control_node` 不再退出。原因：`on_activate` 在 2 秒内等不到新鲜且静止的 RTDE 反馈就返回 ERROR，controller_manager 中止，`joint_state_broadcaster` 的 spawner 120 秒后超时，launch 随之关闭 `dashboard_client` 和 MoveIt。现在真机模式下用 `hardware_components_initial_state.inactive` 让硬件先停在 inactive。`joint_state_broadcaster` 照常激活；`io_and_status_controller`、`freedrive_mode_controller`、`joint_trajectory_controller` 以 `--inactive` 加载。`/robot_manage/*` 与 `/jsonrpc_service` 在机械臂断电时可用。
+- 新增 `on_configure`：只建立 RPC/RTDE 连接和反馈订阅，不上电、不进伺服。硬件 inactive 时 `/joint_states` 也是真实关节角，RViz/MoveIt 不再显示零位。`OnActive` 只在尚未订阅时订阅，断开连接时清掉订阅标记。
+- `controller_stopper` 新增参数 `auto_activate_hardware`（默认 false）、`hardware_component`（默认 `aubo`）、`hardware_poll_period`（默认 1.0 s，下限 0.2 s）、`activate_controllers`（默认空）。`aubo_control.launch.py` 对真机打开这项功能，并把 `io_and_status_controller`、`freedrive_mode_controller` 和初始轨迹控制器填入 `activate_controllers`。开启后，每次轮询经 `/jsonrpc_service` 读 `RobotState.getRobotModeType`；到 Running 时，经 `/controller_manager/set_hardware_component_state` 把硬件切到 active。然后激活上次硬件 active 时处于 active 状态的控制器；硬件从未 active 过时，激活 `activate_controllers`。硬件激活失败时，下次轮询重试。
+- 修复机械臂已是 Running 时启动，控制器留在 inactive。硬件在 spawner 加载控制器之前就被激活，当时没有可激活的控制器，之后加载的控制器也没人去激活。现在硬件激活后进入待恢复状态，每次轮询都会激活新加载的目标控制器，直到目标全部 active。待恢复期间不更新控制器快照。
+- `robot_description.hardware_name()` 从 URDF 读取唯一的 `ros2_control` 系统名，launch 不再写死硬件名。新增依赖 `lifecycle_msgs`。
+
+### 验证
+
+- `colcon build --packages-select aubo_ros2_driver --symlink-install` 通过。`colcon test`（不含 lint）共 25 项，0 失败；`test_robot_description.py` 共 6 项全部通过。
+- 2026-11-13 真机 172.16.31.105：
+  - 机械臂处于 PowerOff 时冷启动全栈，节点均未退出。硬件为 inactive，`joint_state_broadcaster` 为 active，`/joint_states` 约 110 Hz，内容为实际关节角，其余 3 个控制器为 inactive。
+  - 依次上电、等到 Idle、`startup` 后，`controller_stopper` 打印 `Robot is Running; hardware 'aubo' activated.` 并激活其余 3 个控制器。
+  - 硬件 active 时软急停（下电），驱动不退出，也没有锁存故障。
+  - 机械臂已是 Running 时重启全栈：硬件约 1 秒后激活。随后 io 控制器在加载后约 0.15 秒被激活，freedrive 和轨迹控制器加载完成后在下一次轮询被激活，最终 4 个控制器都是 active。
+
+### 验收范围
+
+- 控制柜网络不可达时，`on_init`/`on_configure` 仍会失败，节点仍会退出，这次没有处理。`on_deactivate` 仍断开连接，手动 deactivate 后 inactive 期间没有反馈。
+- 下电瞬间约 0.6 秒内会连续出现 `setServoModeSelect returned -3` 日志，这是改动前就有的行为，这次没有修改。
 ## 未发布（2026-11-02）
 
 ### 修复

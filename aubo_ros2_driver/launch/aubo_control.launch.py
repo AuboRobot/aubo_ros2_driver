@@ -1,7 +1,7 @@
 from pathlib import Path
 import tempfile
 import yaml
-from aubo_ros2_driver.robot_description import configure_hardware
+from aubo_ros2_driver.robot_description import configure_hardware, hardware_name
 from aubo_ros2_driver.control_profile import resolve_update_rate, resolve_servo_period
 
 from ament_index_python.packages import get_package_share_directory
@@ -129,6 +129,14 @@ def launch_setup(context, *args, **kwargs):
         servo_mode.perform(context), fake_sensor_commands.perform(context))
     robot_description = {"robot_description": ParameterValue(
         robot_description_xml, value_type=str)}
+    # Real hardware stays inactive until controller_stopper sees the robot
+    # Running, so a powered-off arm does not abort controller_manager.
+    # Inactive hardware already streams feedback, so only the broadcaster runs.
+    is_real = use_fake_hardware.perform(context).lower() != "true"
+    hw_name = hardware_name(robot_description_xml)
+    initial_state = ({"hardware_components_initial_state.inactive": [hw_name]}
+                     if is_real else {})
+    inactive = ["--inactive"] if is_real else []
 
     rviz_config_file = PathJoinSubstitution(
         [get_package_share_directory(moveit_config_package.perform(context)), "config", "moveit.rviz"]
@@ -139,7 +147,7 @@ def launch_setup(context, *args, **kwargs):
     control_node = Node(
         package="aubo_ros2_driver",
         executable="aubo_ros2_control_node",
-        parameters=[robot_description, robot_controllers],
+        parameters=[robot_description, robot_controllers, initial_state],
         output="both",
     )
     robot_state_publisher_node = Node(
@@ -180,6 +188,7 @@ def launch_setup(context, *args, **kwargs):
             "/controller_manager",
             "--controller-manager-timeout",
             "120",
+            *inactive,
         ],
     )
 
@@ -193,6 +202,7 @@ def launch_setup(context, *args, **kwargs):
             "/controller_manager",
             "--controller-manager-timeout",
             "120",
+            *inactive,
         ],
     )
 
@@ -201,6 +211,15 @@ def launch_setup(context, *args, **kwargs):
         executable="controller_stopper",
         condition=UnlessCondition(use_fake_hardware),
         output="both",
+        parameters=[{
+            "auto_activate_hardware": True,
+            "hardware_component": hw_name,
+            "activate_controllers": [
+                "io_and_status_controller",
+                "freedrive_mode_controller",
+                initial_joint_controller.perform(context),
+            ],
+        }],
     )
 
     dashboard_client_node = Node(
@@ -227,6 +246,7 @@ def launch_setup(context, *args, **kwargs):
             "/controller_manager",
             "--controller-manager-timeout",
             "120",
+            *inactive,
         ],
     )
 

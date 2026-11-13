@@ -3,7 +3,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from aubo_ros2_driver.robot_description import configure_hardware
+from aubo_ros2_driver.robot_description import configure_hardware, hardware_name
 
 XML = '<robot><link name="base"/><ros2_control name="aubo" type="system"><hardware><plugin>aubo_driver/AuboHardwareInterface</plugin></hardware><joint name="joint"/></ros2_control></robot>'
 
@@ -39,6 +39,12 @@ class HardwareDescription(unittest.TestCase):
         for xml in ('<robot/>', '<robot><ros2_control/><ros2_control/></robot>'):
             with self.assertRaises(ValueError):
                 configure_hardware(xml, True, '', .01, .01, 1)
+            with self.assertRaises(ValueError):
+                hardware_name(xml)
+
+    def test_hardware_name_is_read_from_the_system(self):
+        self.assertEqual(hardware_name(XML), 'aubo')
+        self.assertEqual(hardware_name(configure_hardware(XML, False, '192.0.2.1', .01, .01, 1)), 'aubo')
 
 
 if __name__ == '__main__':

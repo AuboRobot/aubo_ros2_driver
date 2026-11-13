@@ -259,8 +259,13 @@ void AuboHardwareInterface::readRobotManageStates()
         rpc_client_->getRobotInterface(robot_name_)->getRobotManage();
 
     try {
+        // Teach is freedrive on the cabinet. isHandguideEnabled stays false
+        // when only freedrive(true) has taken effect.
         handguide_enabled_state_ =
-            robot_manage->isHandguideEnabled() ? 1.0 : 0.0;
+            (robot_manage->isFreedriveEnabled() ||
+             robot_manage->isHandguideEnabled())
+                ? 1.0
+                : 0.0;
     } catch (const std::exception &e) {
         RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
                     "Failed to read get_handguide_enabled: %s", e.what());
@@ -332,7 +337,10 @@ bool AuboHardwareInterface::OnActive()
     // Do not write the SDK example register values on a real robot.
 
     // 配置输出
-    configSubscribe(rtde_client_);
+    if (!rtde_subscribed_) {
+        configSubscribe(rtde_client_);
+        rtde_subscribed_ = true;
+    }
 
     readIoControlConfigStates();
     readRobotManageStates();
@@ -464,6 +472,28 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
 
     return hardware_interface::CallbackReturn::SUCCESS;
 }
+
+hardware_interface::CallbackReturn AuboHardwareInterface::on_configure(
+    const rclcpp_lifecycle::State &previous_state)
+{
+    (void)previous_state;
+    // 只建立只读反馈：未上电/未激活时也发布真实关节状态，不上电、不进伺服。
+    try {
+        if (connectRpcClient() && connectRtdeClient()) {
+            if (!rtde_subscribed_) {
+                configSubscribe(rtde_client_);
+                rtde_subscribed_ = true;
+            }
+            return hardware_interface::CallbackReturn::SUCCESS;
+        }
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            "Hardware configuration failed: %s", e.what());
+    }
+    disconnectClients();
+    return hardware_interface::CallbackReturn::ERROR;
+}
+
 hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
     const rclcpp_lifecycle::State &previous_state)
 {
@@ -1553,41 +1583,93 @@ void AuboHardwareInterface::checkAsyncSdkCommands()
     }
 
     if (has_new_command(handguide_enable_command_)) {
+        const bool enable = handguide_enable_command_ != 0.0;
+        handguide_enable_command_ = no_new_command;
         try {
-            if (handguide_enable_command_ != 0.0) {
-                handguide_mode_active_.store(true);
+            // Same confirmation as dual-arm TEACH: freedrive() then poll.
+            // Do not latch teach from the command itself.
+            const auto teach_enabled = [&]() {
+                return robot_manage->isFreedriveEnabled() ||
+                       robot_manage->isHandguideEnabled();
+            };
+            if (enable) {
                 if (stopServoMode() != 0) {
                     RCLCPP_ERROR(
                         rclcpp::get_logger("AuboHardwareInterface"),
                         "Failed to disable servo mode before entering "
-                        "handguide mode.");
+                        "freedrive.");
                     handguide_mode_active_.store(false);
-                    handguide_enable_command_ = no_new_command;
-                    return;
+                    handguide_enabled_state_ = 0.0;
+                } else {
+                    // The cabinet accepts freedrive only after servo has
+                    // stayed off. 250 ms was not enough on the ES arm: the
+                    // call returned 0, then servo was started again.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    const int rc = robot_manage->freedrive(true);
+                    bool confirmed = false;
+                    for (int attempt = 0; attempt < 40; ++attempt) {
+                        if (teach_enabled()) {
+                            confirmed = true;
+                            break;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    }
+                    if (!confirmed) {
+                        RCLCPP_ERROR(
+                            rclcpp::get_logger("AuboHardwareInterface"),
+                            "Freedrive was not confirmed (freedrive returned %d).",
+                            rc);
+                        try {
+                            robot_manage->freedrive(false);
+                        } catch (const std::exception &stop_error) {
+                            RCLCPP_WARN(
+                                rclcpp::get_logger("AuboHardwareInterface"),
+                                "Failed to clear freedrive after timeout: %s",
+                                stop_error.what());
+                        }
+                        handguide_mode_active_.store(false);
+                        handguide_enabled_state_ = 0.0;
+                    } else {
+                        handguide_mode_active_.store(true);
+                        handguide_enabled_state_ = 1.0;
+                        RCLCPP_INFO(
+                            rclcpp::get_logger("AuboHardwareInterface"),
+                            "Freedrive confirmed (freedrive returned %d).", rc);
+                    }
                 }
-
-                std::vector<int> free_axes(handguide_free_axis_state_.size(),
-                                           1);
-                for (std::size_t i = 0; i < handguide_free_axis_state_.size();
-                     ++i) {
-                    free_axes[i] = static_cast<int>(
-                        std::lround(handguide_free_axis_state_[i]));
-                }
-                std::vector<double> feature(handguide_feature_state_.begin(),
-                                            handguide_feature_state_.end());
-                robot_manage->handguideMode(free_axes, feature);
-                handguide_enabled_state_ = 1.0;
             } else {
-                robot_manage->exitHandguideMode();
-                handguide_enabled_state_ = 0.0;
-                handguide_mode_active_.store(false);
+                const int rc = robot_manage->freedrive(false);
+                bool confirmed = false;
+                for (int attempt = 0; attempt < 50; ++attempt) {
+                    if (!teach_enabled()) {
+                        confirmed = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                if (!confirmed) {
+                    RCLCPP_ERROR(
+                        rclcpp::get_logger("AuboHardwareInterface"),
+                        "Freedrive exit was not confirmed (freedrive returned %d).",
+                        rc);
+                    handguide_mode_active_.store(true);
+                    handguide_enabled_state_ = 1.0;
+                } else {
+                    handguide_mode_active_.store(false);
+                    handguide_enabled_state_ = 0.0;
+                    RCLCPP_INFO(
+                        rclcpp::get_logger("AuboHardwareInterface"),
+                        "Freedrive exit confirmed (freedrive returned %d).", rc);
+                }
             }
         } catch (const std::exception &e) {
-            handguide_mode_active_.store(false);
+            if (enable) {
+                handguide_mode_active_.store(false);
+                handguide_enabled_state_ = 0.0;
+            }
             RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
-                        "Failed to set set_handguide_enable: %s", e.what());
+                        "Failed to set freedrive: %s", e.what());
         }
-        handguide_enable_command_ = no_new_command;
     }
 
     bool has_tcp_offset_command = false;
@@ -1741,6 +1823,7 @@ void AuboHardwareInterface::disconnectClients()
 
     rpc_client_.reset();
     rtde_client_.reset();
+    rtde_subscribed_ = false;
     robot_name_.clear();
     servo_mode_start_ = false;
     servo_mode_pending_ = false;

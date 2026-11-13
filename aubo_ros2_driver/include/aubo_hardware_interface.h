@@ -48,6 +48,8 @@ public:
     virtual ~AuboHardwareInterface();
 
     bool OnActive();
+    hardware_interface::CallbackReturn on_configure(
+        const rclcpp_lifecycle::State &previous_state);
     hardware_interface::CallbackReturn on_activate(
         const rclcpp_lifecycle::State &previous_state);
     hardware_interface::CallbackReturn on_deactivate(
@@ -114,6 +116,7 @@ private:
 
     std::shared_ptr<RpcClient> rpc_client_{ nullptr };
     std::shared_ptr<RtdeClient> rtde_client_{ nullptr };
+    bool rtde_subscribed_{ false };
     std::vector<std::string> joint_names_;
     std::mutex rtde_mtx_;
     std::mutex sdk_command_mtx_;
