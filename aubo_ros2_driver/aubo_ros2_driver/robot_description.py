@@ -2,6 +2,13 @@
 import xml.etree.ElementTree as ET
 
 
+def hardware_name(xml):
+    systems = ET.fromstring(xml).findall("ros2_control")
+    if len(systems) != 1 or not systems[0].get("name"):
+        raise ValueError("Expected exactly one named ros2_control system")
+    return systems[0].get("name")
+
+
 def configure_hardware(xml, use_fake_hardware, robot_ip, control_period,
                        servo_period, servo_mode, fake_sensor_commands="false"):
     root = ET.fromstring(xml)

@@ -1,6 +1,8 @@
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -223,10 +225,28 @@ private:
             return false;
         }
 
+        if (isHandguideEnabled() == enable) {
+            message = "ok";
+            return true;
+        }
+
         requested_enable_ = enable;
         command_pending_ = true;
-        message = "ok";
-        return true;
+        // The hardware applies freedrive on the next write and only then
+        // updates get_handguide_enabled. Returning earlier reports success
+        // while the arm is still in normal servo-off mode.
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        while (rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
+            if (isHandguideEnabled() == enable) {
+                message = "ok";
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        message = enable ? "robot did not enter freedrive"
+                         : "robot did not exit freedrive";
+        return false;
     }
 
     void mapLoanedInterfaces()

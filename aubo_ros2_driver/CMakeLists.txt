@@ -38,6 +38,7 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(controller_manager REQUIRED)
 find_package(controller_manager_msgs REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
@@ -59,6 +60,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   controller_manager_msgs
   geometry_msgs
   hardware_interface
+  lifecycle_msgs
   pluginlib
   rclcpp
   rclcpp_lifecycle
